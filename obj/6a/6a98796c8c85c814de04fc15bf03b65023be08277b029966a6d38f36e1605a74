@@ -1,0 +1,292 @@
+.identity-panel{margin-top:22px;padding:18px;border:1px solid #345066;border-radius:12px;background:#0b1724}
+.identity-panel summary{cursor:pointer;font-weight:650;color:#edce97}
+.identity-panel form{margin:18px 0;display:grid;gap:12px;max-width:520px}
+.identity-panel p{max-width:72ch;color:#b6c9d8;line-height:1.65}
+.identity-panel pre,.identity-panel code{white-space:pre-wrap;overflow-wrap:anywhere;user-select:all;letter-spacing:.04em}
+#authenticator-qr{display:block;width:auto;max-width:100%;height:auto;image-rendering:pixelated;border:16px solid #fff;background:#fff;border-radius:4px;margin:20px 0}
+.registry-scroll{overflow-x:auto}.registry-meta{color:#a5bacb;font-size:12px}.registry-search{max-width:420px}
+
+/* ================================================================ Landeseite (vor dem Spiel)
+   Karl 01.11.2026: „der Start, also die Landung … sehr unangenehm schlecht designt … die Völker sind doppelt … wirklich im
+   Stil des Games … WOW-Effekt und gut funktionieren“. Konsole wie im Infodisplay (dossier.css): Glas, Eckwinkel, LED-Leiste,
+   Holo-Bühne mit Spielmotiven (lighten, nie beschnitten). Reihenfolge: Kopf · Platzwahl · Zugang · Völker · Die Welt.
+   Bewegung nur bei der Auswahl (120 ms) und einmal beim Öffnen. CSP: keine style-Attribute, alles hier. */
+body.game-client{--la-cyan:#6fd6ff;--la-gold:#e2bf7d;--la-text:#e8f0f8;--la-leise:#97abc0;--la-linie:#a9c1db2b;--la-gut:#6fd39a;
+ --la-rot:#e8697a;--la-grund:#060d18;--la-schrift:var(--r-schrift,Oxanium,'Segoe UI',system-ui,sans-serif)}
+body.game-client :is(#server,#claim-panel,#account-panel,#landung-voelker,#lobby){position:relative;border-radius:18px;
+ border:1px solid #6fd6ff2e;color:var(--la-text);font-family:var(--la-schrift);
+ background:radial-gradient(ellipse 120% 60% at 50% -10%,#123150 0,transparent 60%),linear-gradient(180deg,#0b1a2bf2,#060d18f5);
+ box-shadow:inset 0 1px 0 #ffffff14,0 26px 60px -34px #000}
+/* Eckwinkel */
+body.game-client :is(#claim-panel,#account-panel,#landung-voelker,#lobby)::before,
+body.game-client :is(#claim-panel,#account-panel,#landung-voelker,#lobby)::after{content:'';position:absolute;width:22px;height:22px;
+ pointer-events:none;border-color:#6fd6ffaa;border-style:solid;background:none;box-shadow:none;opacity:1}
+body.game-client :is(#claim-panel,#account-panel,#landung-voelker,#lobby)::before{inset:6px auto auto 6px;border-width:2px 0 0 2px;border-radius:12px 0 0 0;z-index:3}
+body.game-client :is(#claim-panel,#account-panel,#landung-voelker,#lobby)::after{inset:auto 6px 6px auto;border-width:0 2px 2px 0;border-radius:0 0 12px 0;z-index:3}
+/* LED-Leiste über jeder Konsole */
+body.game-client .landung-leiste{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 0 12px;
+ font:600 10.5px/1.3 var(--la-schrift);letter-spacing:.2em;text-transform:uppercase;color:#7fb4d6}
+body.game-client .landung-leiste span{display:inline-flex;align-items:center;gap:8px}
+body.game-client .landung-leiste span::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--la-cyan);box-shadow:0 0 8px var(--la-cyan)}
+body.game-client .landung-leiste b{font-weight:600;letter-spacing:.08em;text-transform:none;font-size:12px;color:var(--la-gold);font-variant-numeric:tabular-nums}
+body.game-client :is(#claim-panel,#account-panel,#landung-voelker,#lobby) h2{margin:0 0 6px;font:700 clamp(20px,2.4vw,26px)/1.2 var(--la-schrift);color:#f3e2bf}
+
+/* ---------------------------------------------------------------- Kopf: Startschiff unbeschnitten */
+body.game-client #server{display:flex;flex-direction:column;justify-content:center;min-height:clamp(320px,42vw,500px);
+ padding:clamp(20px,3vw,36px) clamp(20px,3.2vw,40px);overflow:hidden;
+ background:linear-gradient(90deg,var(--la-grund) 0,#060d18f2 26%,#060d1866 50%,#060d1800 66%),
+  url('assets/backgrounds.start.webp') right center/auto 100% no-repeat,var(--la-grund)}
+body.game-client #server>:not(.ai-image-label){max-width:min(560px,52%);position:relative}
+body.game-client #server h1{margin:0 0 12px;font:700 clamp(32px,4.4vw,56px)/1.04 var(--la-schrift);letter-spacing:.005em;
+ color:#f7ecd4;text-shadow:0 2px 24px #000,0 0 40px #e2bf7d33}
+body.game-client #server .landung-lead{margin:0 0 18px;font-size:15px;line-height:1.6;color:#cfdeea}
+body.game-client #server .landung-aktionen{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 16px}
+body.game-client #server .landung-aktionen button,body.game-client #claim-panel #claim-submit,body.game-client #account-panel #login>button{
+ min-height:48px;padding:0 22px;border-radius:12px;font:650 15px/1 var(--la-schrift);letter-spacing:.02em;cursor:pointer;
+ transition:filter .12s ease,transform .12s ease}
+body.game-client #server .landung-aktionen .landung-los,body.game-client #claim-panel #claim-submit,body.game-client #account-panel #login>button{
+ border:1px solid #8fe0b0;color:#06140d;--button-art:linear-gradient(180deg,#8fe0b0,#4fbf86);--button-wash:transparent;box-shadow:0 8px 24px -10px #4fbf86aa}
+body.game-client #server .landung-aktionen .landung-zweit{border:1px solid #e2bf7d99;color:#f3e2bf;--button-art:none;--button-wash:#0b1a2bcc}
+body.game-client #server .landung-aktionen button:hover,body.game-client #claim-panel #claim-submit:hover,body.game-client #account-panel #login>button:hover{filter:brightness(1.08)}
+body.game-client #server .landung-aktionen button:active,body.game-client #claim-panel #claim-submit:active,body.game-client #account-panel #login>button:active{transform:translateY(1px)}
+body.game-client #server details{max-width:min(560px,52%);font-size:12px}
+body.game-client #server details>p{margin:8px 0 0}
+body.game-client #server .muted{font-size:11px;color:#8ea4b8}
+/* Sobald ein neuer Spieler seinen Platz wählt, rückt die Wahl nach oben und der Kopf wird kurz. */
+body.game-client[data-landung=platz] #server{min-height:0}
+body[data-landung=platz] #server :is(.landung-lead,.landung-aktionen,details,p.muted){display:none}
+
+/* ---------------------------------------------------------------- Platzwahl in zwei Schritten */
+body.game-client #claim-panel{padding:clamp(18px,2.6vw,30px)}
+body.game-client #claim-panel>p{color:#c3d3e1;margin:0 0 6px}
+body.game-client #claim-panel #claim{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important;align-items:stretch!important;flex-wrap:nowrap;max-width:none}
+body.game-client #claim-panel #claim>*{min-width:0;margin-left:0;margin-right:0}
+body.game-client #claim-panel .landung-schritt{display:flex;align-items:center;gap:10px;margin:22px 0 10px;font:700 15px/1.2 var(--la-schrift);
+ letter-spacing:.06em;text-transform:uppercase;color:#f3e2bf}
+body.game-client #claim-panel .landung-schritt span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;
+ border:1px solid var(--la-gold);color:var(--la-gold);font-size:13px;letter-spacing:0}
+body.game-client #claim-panel .landung-weise{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+body.game-client #claim-panel .landung-weise button{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-height:56px;margin:0;
+ padding:10px 14px;border-radius:12px;border:1px solid var(--la-linie);--button-art:none;--button-wash:#ffffff08;color:var(--la-text);text-align:left;
+ font:600 15px/1.25 var(--la-schrift);cursor:pointer;transition:border-color .12s ease,background-color .12s ease}
+body.game-client #claim-panel .landung-weise button small{font:400 13px/1.35 var(--la-schrift);color:var(--la-leise)}
+body.game-client #claim-panel .landung-weise button[aria-pressed=true]{border-color:var(--la-gold);--button-wash:#e2bf7d14;box-shadow:inset 0 0 0 1px #e2bf7d66}
+body.game-client #claim-panel .landung-weise button[aria-pressed=true] b::after{content:' ✓';color:var(--la-gold)}
+body.game-client #claim-panel .start-protection{display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start;
+ gap:10px;margin:16px 0 4px;min-height:44px;text-align:left;color:#d7e3ee}
+body.game-client #claim-panel .start-protection input{width:20px;height:20px;accent-color:#4fbf86}
+body.game-client #claim-panel .landung-zusammenfassung{display:flex;align-items:center;gap:12px;margin:14px 0 0;padding:12px 14px;
+ border-radius:14px;border:1px solid #e2bf7d55;background:#e2bf7d0d;font:600 15px/1.35 var(--la-schrift);color:#f3e9d6}
+body.game-client #claim-panel .landung-zusammenfassung img{width:40px;height:40px;object-fit:contain;mix-blend-mode:lighten;filter:brightness(1.35);flex:none}
+body.game-client #claim-panel .landung-zusammenfassung small{display:block;font:400 13px/1.35 var(--la-schrift);color:var(--la-leise)}
+body.game-client #claim-panel #claim-submit{display:block;width:100%;max-width:none;margin:4px 0 8px;min-height:54px;font-size:16px}
+body.game-client #claim-panel #waitlist-state:empty{display:none}
+body.game-client .landung-versteckt,body.game-client :is(#claim,#registration-profile)>label.landung-versteckt{display:none!important}
+
+/* ---------------------------------------------------------------- Zugang */
+body.game-client #account-panel{padding:clamp(18px,2.6vw,30px)}
+body.game-client #account-panel h3{margin:0 0 6px;font:700 20px/1.2 var(--la-schrift);color:#f3e2bf}
+body.game-client #account-panel #login{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;align-items:end;max-width:640px;margin:12px 0}
+body.game-client #account-panel #login label{display:grid;gap:5px;font-size:13px;color:#b9cadb}
+body.game-client #account-panel #login>button{width:100%}
+body.game-client #account-panel .identity-panel{margin-top:12px;border-color:#a9c1db2b;background:#ffffff06}
+body.game-client #account-panel .landung-volkzeile{margin:0;font-size:13px;color:#c3d3e1}
+body.game-client #account-panel .landung-volkzeile b{color:var(--la-gold)}
+
+/* ---------------------------------------------------------------- Völkerschau: ein Volk groß auf der Holo-Bühne */
+body.game-client #landung-voelker{padding:clamp(18px,2.6vw,30px)}
+body.game-client :is(#volk-preview,#volk-choice).faction-grid{display:block;margin:12px 0 0}
+body.game-client .lv{--lv:#e2bf7d;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);grid-template-areas:"wahl wahl" "buehne akte";gap:12px}
+body.game-client .lv.lv-krath{--lv:#e8697a}body.game-client .lv.lv-veyari{--lv:#6fd39a}body.game-client .lv.lv-syntheten{--lv:#6fd6ff}
+body.game-client .lv-wahl{grid-area:wahl;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+body.game-client .lv .lv-tab{--lt:#e2bf7d;display:flex;flex-direction:column;align-items:center;gap:3px;min-height:44px;margin:0;padding:8px 6px 9px;
+ border-radius:14px;border:1px solid var(--la-linie);--button-art:none;--button-wash:#ffffff06;color:var(--la-text);text-align:center;overflow:visible;
+ font-family:var(--la-schrift);cursor:pointer;transition:border-color .12s ease,background-color .12s ease,opacity .12s ease}
+body.game-client .lv .lv-tab[data-race=krath]{--lt:#e8697a}body.game-client .lv .lv-tab[data-race=veyari]{--lt:#6fd39a}body.game-client .lv .lv-tab[data-race=syntheten]{--lt:#6fd6ff}
+body.game-client .lv .lv-tab img.lv-wappen{width:60px;height:60px;aspect-ratio:1;object-fit:contain;mix-blend-mode:lighten;border-radius:50%;
+ filter:brightness(1.35) contrast(1.05);opacity:.78;transition:opacity .12s ease}
+body.game-client .lv .lv-tab[aria-pressed=true] img.lv-wappen,body.game-client .lv .lv-tab:hover img.lv-wappen{opacity:1}
+body.game-client .lv .lv-tab .lv-tab-name{font:700 14px/1.2 var(--la-schrift);color:#f3e9d6;overflow-wrap:anywhere}
+body.game-client .lv .lv-tab small{font:400 11.5px/1.3 var(--la-schrift);color:var(--la-leise)}
+body.game-client .lv .lv-tab:hover:not(:disabled){border-color:color-mix(in srgb,var(--lt) 60%,transparent)}
+body.game-client .lv .lv-tab[aria-pressed=true]{border-color:var(--lt);--button-wash:color-mix(in srgb,var(--lt) 12%,#0b1a2b);
+ box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--lt) 50%,transparent),0 10px 26px -16px var(--lt)}
+body.game-client .lv .lv-tab[aria-pressed=true] .lv-tab-name::after{content:' ✓';color:var(--lt)}
+body.game-client .lv .lv-tab:disabled{opacity:.42;cursor:default}
+body.game-client .lv .lv-tab[aria-pressed=true]:disabled{opacity:1}
+body.game-client .lv-buehne{grid-area:buehne;position:relative;aspect-ratio:16/10;min-height:0;border-radius:14px;overflow:hidden;isolation:isolate;
+ border:1px solid color-mix(in srgb,var(--lv) 35%,transparent);
+ background:radial-gradient(ellipse 46% 16% at 30% 100%,color-mix(in srgb,var(--lv) 30%,transparent),transparent 80%),
+  var(--lv-schiff) right 2% top 46%/auto 88% no-repeat,#020407;background-blend-mode:normal,lighten}
+body.game-client .lv.lv-aurelianer{--lv-schiff:url('assets/megaships.aurelianer.todesmond.webp')}
+body.game-client .lv.lv-krath{--lv-schiff:url('assets/megaships.krath.todesmond.webp')}
+body.game-client .lv.lv-veyari{--lv-schiff:url('assets/megaships.veyari.todesmond.webp')}
+body.game-client .lv.lv-syntheten{--lv-schiff:url('assets/megaships.syntheten.todesmond.webp')}
+body.game-client .lv-buehne::before{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;background:repeating-linear-gradient(0deg,#ffffff07 0 1px,transparent 1px 3px)}
+body.game-client .lv-buehne::after{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;transform:translateY(-100%);
+ background:linear-gradient(180deg,transparent 0,#6fd6ff18 44%,#c8f3ff40 50%,#6fd6ff18 56%,transparent 100%);animation:lv-abtasten 1.6s .2s ease-out 1 both}
+@keyframes lv-abtasten{to{transform:translateY(100%)}}
+body.game-client .lv-buehne img{position:absolute;object-fit:contain;mix-blend-mode:lighten;aspect-ratio:1;max-width:none}
+body.game-client .lv-buehne img.lv-bild{left:0;bottom:0;height:100%;width:auto;z-index:1;
+ -webkit-mask-image:linear-gradient(90deg,#000 45%,transparent 80%),linear-gradient(0deg,transparent 0,#000 14%);-webkit-mask-composite:source-in;
+ mask-image:linear-gradient(90deg,#000 45%,transparent 80%),linear-gradient(0deg,transparent 0,#000 14%);mask-composite:intersect}
+body.game-client .lv-buehne .lv-sockel{position:absolute;left:6%;right:6%;bottom:-18px;height:44px;z-index:1;border-radius:50%;pointer-events:none;
+ background:radial-gradient(ellipse at 50% 50%,color-mix(in srgb,var(--lv) 40%,transparent),transparent 70%)}
+body.game-client .lv-akte{grid-area:akte;display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px 16px;border-radius:14px;
+ border:1px solid var(--la-linie);background:#ffffff05}
+body.game-client .lv-akte .landung-leiste{margin:0}
+body.game-client .lv-akte h3{margin:0;font:700 28px/1.1 var(--la-schrift);color:color-mix(in srgb,var(--lv) 70%,#fff)}
+body.game-client .lv-akte .lv-rolle{margin:0;font-size:13px;line-height:1.5;color:#c3d3e1}
+body.game-client .lv-akte .lv-chips{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+body.game-client .lv-akte .lv-chips li{display:flex;align-items:center;gap:6px;min-height:30px;margin:0;padding:3px 11px;border-radius:999px;
+ font-size:13px;line-height:1.3;background:#ffffff0a;border:1px solid var(--la-linie);color:#dbe6f1;font-variant-numeric:tabular-nums}
+body.game-client .lv-akte .lv-chips li.gut{border-color:#6fd39a59}body.game-client .lv-akte .lv-chips li.gut::before{content:'▲';color:var(--la-gut);font-size:10px}
+body.game-client .lv-akte .lv-chips li.schlecht{border-color:#e8697a66;background:#e8697a12}body.game-client .lv-akte .lv-chips li.schlecht::before{content:'▼';color:var(--la-rot);font-size:10px}
+body.game-client .lv-akte .lv-extra{margin:2px 0 0;font-size:13px;line-height:1.5;color:#a9bfd6}
+body.game-client .lv-akte .lv-heimat{margin:auto 0 0;padding-top:6px}
+body.game-client .lv-akte .lv-heimat img{display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:contain;border-radius:10px;border:1px solid color-mix(in srgb,var(--lv) 30%,transparent);background:#050b14}
+
+/* ---------------------------------------------------------------- Randteile im selben Look */
+body.game-client #offline-entry{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:10px 16px;border-radius:14px;
+ border:1px solid #6fd6ff2e;background:#0b1a2bd9;font:400 13px/1.45 var(--la-schrift);color:#c3d3e1}
+body.game-client #offline-entry strong{color:#f3e2bf}
+body.game-client #team-lobby{border-radius:18px;border:1px solid #6fd6ff2e;background:linear-gradient(180deg,#0b1a2bf2,#060d18f5);
+ box-shadow:inset 0 1px 0 #ffffff14,0 26px 60px -34px #000;font-family:var(--la-schrift)}
+body.game-client #team-lobby>summary{font:700 17px/1.3 var(--la-schrift);color:#f3e2bf;min-height:44px;display:flex;align-items:center}
+
+/* ---------------------------------------------------------------- Die Welt: Lage kompakt, Rangliste */
+body.game-client #lobby{padding:clamp(18px,2.6vw,30px)}
+body.game-client #lobby #world-summary{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 6px}
+body.game-client #lobby .wl-plaetze{flex:1 1 260px;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;
+ border:1px solid var(--la-linie);background:#ffffff06}
+body.game-client #lobby .wl-kopf{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+body.game-client #lobby .wl-kopf span{font:600 10.5px/1.3 var(--la-schrift);letter-spacing:.2em;text-transform:uppercase;color:#7fb4d6}
+body.game-client #lobby .wl-kopf b{font:700 22px/1.1 var(--la-schrift);color:var(--la-gold);font-variant-numeric:tabular-nums}
+body.game-client #lobby .wl-balken{height:8px;border-radius:999px;background:#ffffff12;overflow:hidden}
+body.game-client #lobby .wl-balken i{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#4fbf86,#8fe0b0);box-shadow:0 0 10px #4fbf8666}
+body.game-client #lobby .wl-plaetze small{font-size:12.5px;line-height:1.4;color:var(--la-leise);font-variant-numeric:tabular-nums}
+body.game-client #lobby .wl-werte{flex:2 1 320px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+body.game-client #lobby .wl-wert{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;padding:10px 6px;
+ border-radius:14px;border:1px solid var(--la-linie);background:#ffffff06;text-align:center}
+body.game-client #lobby .wl-wert b{display:flex;align-items:center;gap:6px;font:700 22px/1.1 var(--la-schrift);color:#f3e9d6;font-variant-numeric:tabular-nums}
+body.game-client #lobby .wl-wert span{font:600 10.5px/1.3 var(--la-schrift);letter-spacing:.14em;text-transform:uppercase;color:#7fb4d6}
+body.game-client #lobby .wl-wert small{font-size:11.5px;color:var(--la-rot)}
+body.game-client #lobby .wl-wert.wl-an b::before,body.game-client #lobby .wl-wert.wl-aus b::before{content:'';width:8px;height:8px;border-radius:50%;flex:none}
+body.game-client #lobby .wl-wert.wl-an b::before{background:var(--la-gut);box-shadow:0 0 8px var(--la-gut)}
+body.game-client #lobby .wl-wert.wl-aus b::before{background:var(--la-rot);box-shadow:0 0 8px var(--la-rot)}
+body.game-client #lobby>details{margin-top:8px}
+body.game-client #lobby>details>summary{display:flex;align-items:center;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--la-linie);
+ background:#ffffff05;font:600 14px/1.3 var(--la-schrift);color:#f3e2bf;cursor:pointer}
+body.game-client #lobby>details>summary{list-style:none}body.game-client #lobby>details>summary::-webkit-details-marker{display:none}
+body.game-client #lobby>details>summary::before{content:"▸";width:16px;margin-right:8px;color:var(--la-gold)}
+body.game-client #lobby>details[open]>summary::before{content:"▾"}
+body.game-client #lobby h3{margin:18px 0 8px;font:700 14px/1.2 var(--la-schrift);letter-spacing:.12em;text-transform:uppercase;color:#f3e2bf}
+body.game-client #lobby #ranking{border-radius:12px;border:1px solid var(--la-linie);background:#ffffff04}
+body.game-client #lobby #ranking table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+body.game-client #lobby #ranking th{position:sticky;top:0;z-index:1;background:#0b1a2b;font:600 10.5px/1.3 var(--la-schrift);letter-spacing:.16em;color:#7fb4d6}
+body.game-client #lobby #ranking tbody tr:nth-child(-n+3) td:nth-child(2){color:var(--la-gold);font-weight:700}
+body.game-client #lobby #ranking tbody tr:nth-child(1) td:first-child::before{content:'◆ ';color:var(--la-gold)}
+body.game-client #lobby .columns{grid-template-columns:minmax(0,1fr)}
+
+@media (max-width:700px){
+ /* Startschiff ganz als Band oben, Text darunter (Motiv nie beschneiden) */
+ body.game-client #server{display:block;min-height:0;padding:calc(50% + 14px) 16px 18px;
+  background:url('assets/backgrounds.start.webp') top center/100% auto no-repeat,var(--la-grund)}
+ body.game-client #server>:not(.ai-image-label),body.game-client #server details{max-width:none}
+ body.game-client #server h1{font-size:clamp(28px,8.4vw,36px)}
+ body.game-client[data-landung=platz] #server{padding-bottom:10px}
+ body.game-client .lv{grid-template-columns:minmax(0,1fr);grid-template-areas:"wahl" "buehne" "akte"}
+ body.game-client .lv-wahl{gap:6px}
+ body.game-client .lv .lv-tab{padding:7px 3px 8px}
+ body.game-client .lv .lv-tab img.lv-wappen{width:44px;height:44px}
+ body.game-client .lv .lv-tab small{display:none}
+ body.game-client .lv-buehne{aspect-ratio:4/3}
+ body.game-client .lv-akte .lv-heimat{display:none}
+ body.game-client .lv-buehne{background-position:0 0,right 2% top 46%;background-size:auto,auto 68%}
+ body.game-client #claim-panel #claim-submit{max-width:none}
+ body.game-client #account-panel #login{grid-template-columns:minmax(0,1fr)}
+ body.game-client #lobby .wl-werte{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+ body.game-client #lobby .wl-wert{padding:9px 2px}
+ body.game-client #lobby .wl-wert b{font-size:18px}
+ body.game-client #lobby .wl-wert span{font-size:9.5px;letter-spacing:.08em}
+}
+@media (prefers-reduced-motion:reduce){body.game-client .lv-buehne::after{animation:none;display:none}}
+
+/* ---------------------------------------------------------------- Runde 8 (Karl 01.11.2026 abends): Glas, Tor ins Spiel,
+   Server-Konsole, Raumverkehr im Hintergrund. Bewegung nur per transform/opacity bzw. einmaligem Übergang. */
+/* Glas: die Spielkulisse (Nebel, Sterne, Asteroid, Schiff) scheint durch – wie die Konsolen im Spiel. */
+body.game-client :is(#claim-panel,#landung-voelker,#lobby){
+ background:radial-gradient(ellipse 120% 60% at 50% -10%,#12315070 0,transparent 60%),linear-gradient(160deg,#0d2136a8,#060d1894);
+ -webkit-backdrop-filter:blur(10px) saturate(1.15);backdrop-filter:blur(10px) saturate(1.15)}
+body.game-client #server{background:linear-gradient(90deg,#02101f 0,#02101f 19%,#02101fc4 32%,#02101f40 56%,#02101f00 70%),
+  linear-gradient(180deg,#02101f00 calc(min(520px,42vw) - 140px),#02101f min(520px,42vw)),
+  url('assets/backgrounds.start.webp') right top/auto min(520px,42vw) no-repeat,#02101f;
+ -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+body.game-client :is(.lv-akte,#lobby .wl-plaetze,#lobby .wl-wert,#lobby>details>summary,#lobby #ranking,#claim-panel .landung-weise button){
+ -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+/* Raumverkehr: auf der Landeseite ohne eigene Nebelschicht (der Grund hat sie schon) und öfter zu sehen. */
+body.game-client:not([data-playing=true]) #space-ambience{opacity:1;background:none}
+body.game-client:not([data-playing=true]) #space-ambience .ambient-asteroid{width:150px;height:150px;animation-duration:46s;animation-delay:1.5s}
+body.game-client:not([data-playing=true]) #space-ambience .ambient-ship{animation-duration:64s;animation-delay:14s}
+
+/* Raumverkehr im Kopf: Asteroid und Frachter ziehen selten durchs Bild – über dem Startbild, unter der Schrift
+   (dieselbe Flugbahn wie #space-ambience im Spiel; die liegt hinter den Konsolen und war im Kopf nicht zu sehen). */
+body.game-client #server{position:relative;isolation:isolate}
+body.game-client #server>:not(.ai-image-label){z-index:1}
+body.game-client #server::before,body.game-client #server::after{content:'';position:absolute;inset:auto;pointer-events:none;z-index:0;opacity:0;
+ mix-blend-mode:screen;background-position:center;background-size:contain;background-repeat:no-repeat;border:0;border-radius:0;box-shadow:none;
+ -webkit-mask-image:radial-gradient(closest-side,#000 62%,transparent 100%);mask-image:radial-gradient(closest-side,#000 62%,transparent 100%)}
+body.game-client #server::after{width:130px;height:130px;top:14%;left:-170px;background-image:url('assets/planets.asteroid.webp');
+ animation:landung-vorbei 38s linear 1.2s infinite}
+body.game-client #server::before{width:170px;height:100px;top:62%;left:-210px;background-image:url('assets/ships.schnellfrachter.aurelianer.webp');
+ animation:landung-vorbei 52s linear 11s infinite}
+@keyframes landung-vorbei{0%{transform:translate3d(0,0,0) rotate(-10deg);opacity:0}3%{opacity:.75}22%{opacity:.75}
+ 26%{transform:translate3d(calc(100vw + 420px),-70px,0) rotate(6deg);opacity:0}100%{transform:translate3d(calc(100vw + 420px),-70px,0) rotate(6deg);opacity:0}}
+body[data-ambience=false] #server::before,body[data-ambience=false] #server::after{animation:none}
+body[data-page-hidden=true] #server::before,body[data-page-hidden=true] #server::after{animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){body.game-client #server::before,body.game-client #server::after{animation:none;display:none}}
+
+/* Tor ins Spiel: der Knopf öffnet die Anmeldung direkt darunter. */
+body.game-client #server .landung-tor{display:grid;gap:0;max-width:min(640px,58%)}
+body.game-client #server .landung-tor .landung-aktionen{margin:0}
+body.game-client #server .landung-tor-koerper{display:grid;grid-template-rows:0fr;opacity:0;transform:translateY(-8px);
+ transition:grid-template-rows .42s cubic-bezier(.2,.8,.2,1),opacity .3s ease .08s,transform .42s cubic-bezier(.2,.8,.2,1)}
+body.game-client #server .landung-tor.offen .landung-tor-koerper{grid-template-rows:1fr;opacity:1;transform:none}
+body.game-client #server .landung-tor-innen{min-height:0;overflow:hidden;padding:0 2px}
+body.game-client #server .landung-tor #account-panel{max-width:none;margin:14px 0 2px;padding:16px 18px;border-radius:16px;
+ background:linear-gradient(160deg,#0d2136d9,#060d18c8);border:1px solid #8fe0b055;box-shadow:inset 0 1px 0 #ffffff14,0 18px 40px -24px #000}
+body.game-client #server .landung-tor #account-panel h3{font-size:18px}
+body.game-client #server .landung-los{position:relative;display:inline-flex;align-items:center;gap:10px;overflow:hidden;isolation:isolate}
+body.game-client #server .landung-los .landung-pfeil{display:inline-block;font-size:20px;line-height:1;transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+body.game-client #server .landung-tor.offen .landung-los .landung-pfeil{transform:rotate(90deg)}
+body.game-client #server .landung-tor.offen .landung-los{box-shadow:0 0 0 1px #8fe0b0,0 10px 30px -10px #4fbf86}
+/* Lichtkante beim Überfahren: läuft einmal über den Knopf, keine Dauerschleife. */
+body.game-client :is(#server .landung-los,#claim-panel #claim-submit,#account-panel #login>button)::after{content:'';position:absolute;inset:0;z-index:-1;
+ pointer-events:none;background:linear-gradient(105deg,transparent 30%,#ffffff70 48%,transparent 66%);transform:translateX(-110%);transition:transform .7s ease}
+body.game-client :is(#server .landung-los,#claim-panel #claim-submit,#account-panel #login>button):is(:hover,:focus-visible)::after{transform:translateX(110%)}
+body.game-client :is(#claim-panel #claim-submit,#account-panel #login>button){position:relative;overflow:hidden;isolation:isolate}
+body.game-client .lv .lv-tab{transition:border-color .12s ease,background-color .12s ease,opacity .12s ease,transform .18s ease}
+body.game-client .lv .lv-tab:hover:not(:disabled){transform:translateY(-2px)}
+body.game-client #server .landung-zweit:hover{border-color:var(--la-gold);--button-wash:#e2bf7d1c}
+
+/* Server-Konsole (lokal: Alleinspiel oder WLAN-Runde) */
+body.game-client #server .landung-server{max-width:min(640px,58%);margin:0 0 16px;padding:12px 14px;border-radius:14px;border:1px solid #6fd6ff33;
+ background:#060d18b0;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+body.game-client #server .landung-server .landung-leiste{margin:0 0 8px}
+body.game-client #server .landung-server-werte{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 14px}
+body.game-client #server .landung-server-werte li{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0}
+body.game-client #server .landung-server-werte span{font:600 10px/1.3 var(--la-schrift);letter-spacing:.16em;text-transform:uppercase;color:#7fb4d6}
+body.game-client #server .landung-server-werte b{font:600 14px/1.35 var(--la-schrift);color:#f3e9d6;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+body.game-client #server .landung-server #landung-einstellungen{margin-top:10px;min-height:44px;padding:0 16px;border-radius:12px;font:600 14px/1 var(--la-schrift)}
+body.game-client #server .landung-server-hinweis{margin:8px 0 0;font-size:12.5px;line-height:1.45;color:var(--la-leise)}
+/* Platzwahl: Kopf kurz, Tor und Server-Konsole aus (die Anmeldung ist erledigt). */
+body.game-client[data-landung=platz] #server :is(.landung-tor,.landung-server){display:none}
+@media (max-width:700px){
+ body.game-client #server{background:url('assets/backgrounds.start.webp') top center/100% auto no-repeat,#02101f}
+ body.game-client #server .landung-tor,body.game-client #server .landung-server{max-width:none}
+ body.game-client #server .landung-server-werte{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (prefers-reduced-motion:reduce){
+ body.game-client #server .landung-tor-koerper,body.game-client #server .landung-pfeil{transition:none}
+ body.game-client :is(#server .landung-los,#claim-panel #claim-submit,#account-panel #login>button)::after{display:none}
+}

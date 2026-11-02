@@ -1,0 +1,787 @@
+'use strict';
+// Handy-Cockpit von Sternenepoche: liegt als eigene Ebene (Shadow DOM) über dem Spiel und
+// verändert dessen Abläufe nicht. Es liest nur, was das Spiel ohnehin sichtbar anzeigt
+// (`view`, `world`), nie versteckte Inhalte, und sendet selbst nichts an den Spielserver.
+// Flottenbefehle bleiben Befehle des Spielers: „Flotte hierhin“ füllt nur das Formular aus.
+(() => {
+if (window.SternMobil) return;
+const app = window.SternApp;
+if (!app) return;
+const START = location.protocol === 'file:';
+const BASIS = START ? '../mobil/' : '/__mobil/';
+
+// ------------------------------------------------------------------ Brücke (geteilt mit start.js)
+if (!window.SternBus) {
+  const hoerer = {}, warte = {}; let nr = 0;
+  window.SternBus = {
+    an(art, f) { (hoerer[art] ||= []).push(f); },
+    rufe(methode, ...args) { return new Promise((ok, nein) => { const id = 'm' + (++nr); warte[id] = {ok, nein}; app[methode](id, ...args); }); },
+    sync(methode, ...args) { const roh = app[methode](...args); const r = roh ? JSON.parse(roh) : {}; if (r && !Array.isArray(r) && r.fehler) throw new Error(r.fehler); return r; },
+  };
+  window.SternEreignis = (art, d) => (hoerer[art] || []).forEach(f => { try { f(d); } catch (e) { console.error(e); } });
+  window.SternAntwort = (id, f, w) => { const x = warte[id]; delete warte[id]; if (x) f ? x.nein(new Error(f)) : x.ok(w); };
+}
+const {sync} = window.SternBus;
+// The local server keeps its origin on recovery. Refresh the existing page and its
+// durable session as soon as the service becomes healthy; retain forms and selection.
+window.SternBus.an('welt', w => {
+  if (START || !['127.0.0.1','localhost'].includes(location.hostname)) return;
+  if (w.status === 'laeuft' && w.url === location.origin && typeof window.refresh === 'function') window.refresh();
+});
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const zahl = n => Number(n || 0).toLocaleString('de-DE', {maximumFractionDigits: 0});
+const jetzt = () => Date.now();
+const uid = () => jetzt().toString(36) + Math.random().toString(36).slice(2, 7);
+// Koordinate Sektor:System:Planet (z. B. 1:27:6). Uhrzeiten (12:30:05) sind keine Koordinaten.
+const KOORD = /(?<![\d:.])(\d{1,2}):(\d{1,3}):(\d{1,2})(?![\d:])/g;
+const istZeit = k => /^\d{2}:\d{2}:\d{2}$/.test(k);
+const koordinaten = t => [...String(t || '').matchAll(KOORD)].map(m => m[0]).filter(k => !istZeit(k));
+const MISSIONEN = [['angriff', 'Angriff'], ['spionage', 'Ausspähen'], ['transport', 'Transport'], ['stationieren', 'Stationieren'], ['uebergeben', 'Übergeben'],
+  ['kolonisieren', 'Kolonisieren'], ['saven', 'Saven'], ['recyceln', 'Recyceln'], ['abbau', 'Abbau'], ['halten', 'Halten'], ['verstaerken', 'Bodenhilfe'],
+  ['blockade', 'Blockade'], ['bombardieren', 'Bombardieren'], ['kampfkolonisieren', 'Kampfkolonisieren'], ['system_erkunden', 'System erkunden']];
+
+// ------------------------------------------------------------------ Spielzustand (nur lesen)
+const spielView = () => { try { return typeof view !== 'undefined' && view && typeof view === 'object' && !(view instanceof Element) ? view : null; } catch { return null; } };
+const spielWelt = () => { try { return typeof world !== 'undefined' && world && typeof world === 'object' && !(world instanceof Element) ? world : null; } catch { return null; } };
+const imSpiel = () => !START && typeof window.pickFleet === 'function';
+let infoCache = null;
+function appInfo() { if (!infoCache) try { infoCache = sync('info'); } catch { infoCache = {}; } return infoCache; }
+function weltSchluessel() {
+  const w = spielWelt();
+  if (w?.world_id) return String(w.world_id);
+  if (START) return appInfo().welt?.world_id || 'allgemein';
+  return location.host;
+}
+const spielTag = () => { const w = spielWelt(); return w ? Math.floor((w.sekunden || 0) / 86400) + 1 : null; };
+
+// ------------------------------------------------------------------ Ablage je Welt (echte Dateien in der App)
+const ablage = {}; let ablageWelt = ''; const speicherTimer = {};
+function laden(name) {
+  const w = weltSchluessel();
+  if (w !== ablageWelt) { ablageWelt = w; for (const k of Object.keys(ablage)) delete ablage[k]; }
+  if (!ablage[name]) {
+    let v = {};
+    try { const s = app.ablageLesen(w, name); v = s ? JSON.parse(s) : {}; if (v.fehler) v = {}; } catch { v = {}; }
+    ablage[name] = v;
+  }
+  return ablage[name];
+}
+function speichern(name, sofort = false) {
+  clearTimeout(speicherTimer[name]);
+  const tun = () => { try { const r = JSON.parse(app.ablageSchreiben(ablageWelt, name, JSON.stringify(ablage[name])) || '{}'); if (r.fehler) toast(r.fehler, true); } catch (e) { toast(e.message, true); } };
+  if (sofort) tun(); else speicherTimer[name] = setTimeout(tun, 400);
+}
+const ziele = () => { const k = laden('koordinaten'); k.liste ||= []; return k; };
+const plan = () => { const p = laden('plan'); p.aufgaben ||= []; return p; };
+const spionage = () => { const s = laden('spionage'); s.berichte ||= {}; s.ordner ||= ['Farmen', 'Gefährlich', 'Allianz', 'Beobachten']; return s; };
+
+// ------------------------------------------------------------------ Oberfläche im Shadow DOM
+const wirt = document.createElement('div');
+wirt.id = 'stern-mobil-wirt';
+const schatten = wirt.attachShadow({mode: 'open'});
+schatten.innerHTML = `<link rel="stylesheet" href="${BASIS}mobil.css">
+<button class="fab" id="fab" aria-label="Handy-Cockpit öffnen" ${START ? 'hidden' : ''}>◆</button>
+<div class="zielleiste" id="zielleiste" hidden></div>
+<div class="menue" id="menue" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<section class="blatt" id="blatt" hidden>
+  <header><b>Handy-Cockpit</b><span id="blatt-welt" class="matt"></span><button class="zu" id="zu" aria-label="Schließen">✕</button></header>
+  <nav class="reiter" id="reiter">
+    <button data-r="notizen">Notizen</button><button data-r="graph">Graph</button><button data-r="plan">Plan</button>
+    <button data-r="spionage">Spionage</button><button data-r="ziele">Ziele</button>
+  </nav>
+  <div class="inhalt" id="inhalt"></div>
+</section>`;
+const $ = id => schatten.getElementById(id);
+(document.body ? Promise.resolve() : new Promise(r => addEventListener('DOMContentLoaded', r))).then(() => document.body.append(wirt));
+
+let toastTimer;
+function toast(text, fehler = false) {
+  const t = $('toast'); t.textContent = text; t.hidden = false; t.classList.toggle('fehler', fehler);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, fehler ? 6000 : 2600);
+}
+const brumm = () => { try { app.vibrieren(18); } catch {} };
+
+let reiter = 'notizen';
+function oeffnen(r) {
+  if (r) reiter = r;
+  $('blatt').hidden = false; $('fab').hidden = true;
+  document.documentElement.style.overflow = 'hidden';
+  zeichnen();
+}
+function schliessen() {
+  $('blatt').hidden = true; $('fab').hidden = START || imMenue;
+  document.documentElement.style.overflow = '';
+  graphStopp();
+}
+$('fab').onclick = () => { brumm(); oeffnen(); };
+// Im Spiel öffnet „Mehr → Cockpit“ das Handy-Cockpit. Kein schwebender Knopf mehr über Inhalt und unterer Menüleiste
+// (APK 0.4.0: der ◆-Knopf lag auf „Mehr“). Ohne Spielmenü (Startseite, alte Seiten) bleibt der Knopf.
+let imMenue = false;
+function cockpitImMenue() {
+  const nav = document.getElementById('tabs');
+  if (START || !nav || !nav.querySelector('[data-menue-mehr]')) return false;
+  if (!nav.querySelector('[data-menue="cockpit"]')) {
+    nav.insertAdjacentHTML('beforeend', '<button type="button" data-menue="cockpit" class="menue-gold" title="Handy-Cockpit: Notizen, Graph, Plan, Spionage, Ziele"><span class="menue-name">Cockpit</span><svg class="menue-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l9 9-9 9-9-9z"/></svg></button>');
+    nav.querySelector('[data-menue="cockpit"]').onclick = e => {
+      e.stopPropagation(); nav.classList.remove('mehr-offen'); nav.querySelector('[data-menue-mehr]')?.setAttribute('aria-expanded', 'false');
+      brumm(); oeffnen();
+    };
+  }
+  // Der Stern oben links öffnet das Cockpit ebenfalls – immer sichtbar, ein Tipp (19.10.2026, Karl: „wo ist die Tiefe hin?“).
+  const stern = document.querySelector('header .brand');
+  if (stern && !stern.dataset.cockpit) {
+    stern.dataset.cockpit = '1'; stern.setAttribute('role', 'button'); stern.setAttribute('tabindex', '0');
+    stern.setAttribute('aria-label', 'Handy-Cockpit öffnen: Notizen, Graph, Plan, Spionage, Ziele');
+    const auf = e => { if (!document.body.dataset.playing) return; e.preventDefault(); e.stopPropagation(); brumm(); oeffnen(); };
+    stern.addEventListener('click', auf, true);
+    stern.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') auf(e); });
+  }
+  imMenue = true; $('fab').hidden = true; return true;
+}
+if (!cockpitImMenue()) { let n = 0; const t = setInterval(() => { if (cockpitImMenue() || ++n > 40) clearInterval(t); }, 250); }
+document.addEventListener('game-navigation', () => { if (!imMenue) cockpitImMenue(); });
+$('zu').onclick = schliessen;
+$('reiter').querySelectorAll('button').forEach(b => b.onclick = () => { reiter = b.dataset.r; offeneNotiz = null; zeichnen(); });
+
+function zeichnen() {
+  $('reiter').querySelectorAll('button').forEach(b => b.classList.toggle('an', b.dataset.r === reiter));
+  const tag = spielTag();
+  $('blatt-welt').textContent = tag ? ` · Tag ${tag}` : START ? '' : ' · ' + location.host;
+  graphStopp();
+  ({notizen: notizenZeigen, graph: graphZeigen, plan: planZeigen, spionage: spionageZeigen, ziele: zieleZeigen}[reiter])();
+}
+
+// ------------------------------------------------------------------ Koordinaten: kopieren, merken, Flotte
+function kopieren(text) { try { app.kopieren(text); brumm(); toast(`„${text}“ kopiert`); } catch (e) { toast(e.message, true); } }
+function merken(k, name = '') {
+  const z = ziele();
+  const da = z.liste.find(x => x.k === k);
+  if (da) { da.zuletzt = jetzt(); if (name && !da.name) da.name = name; }
+  else z.liste.unshift({id: uid(), k, name, notiz: '', zuletzt: jetzt()});
+  speichern('koordinaten'); brumm(); toast(`${k} gemerkt`);
+}
+function zuletztBenutzt(k) { const z = ziele(); const d = z.liste.find(x => x.k === k); if (d) { d.zuletzt = jetzt(); speichern('koordinaten'); } }
+/** Füllt das Flottenformular des Spiels (pickFleet) – senden muss der Spieler selbst. */
+function flotte(k, mission) {
+  if (!imSpiel()) { kopieren(k); toast('Koordinate kopiert – im Spiel bei „Ziel“ einfügen'); return; }
+  try {
+    window.pickFleet(k, mission || 'angriff');
+    zuletztBenutzt(k);
+    schliessen(); menueZu();
+    toast(`Flotte nach ${k} vorbereitet (${(MISSIONEN.find(m => m[0] === mission) || [, mission])[1]}) – Schiffe wählen und senden`);
+  } catch (e) { toast('Flottenformular nicht gefunden: ' + e.message, true); }
+}
+// Mond an der Koordinate (eigener, aus der Galaxie oder aus Mondberichten bekannt) – Karl 30.10.2026: „den Mond von einem
+// Planeten über Koordinaten anfliegen“. Öffnet die Einsatzplanung mit Zielart Mond; dort stehen die passenden Aufträge.
+function mondBei(k) {
+  const v = spielView(); if (!v) return null;
+  return (v.monde?.eigene || []).find(m => m.koord === k) || (v.atlas || []).find(a => a.koord === k && a.mond)?.mond || (v.monde?.bekannt || []).find(m => m.koord === k) || null;
+}
+function flotteMond(k) {
+  if (!imSpiel() || !window.Einsatz?.oeffnen) { kopieren(k); toast('Koordinate kopiert – im Spiel bei „Ziel“ einfügen'); return; }
+  window.Einsatz.oeffnen({ziel: k, zielart: 'mond'});
+  zuletztBenutzt(k); schliessen(); menueZu();
+}
+function missionWahl(k, x, y) {
+  // Auftragszeichen und -farben aus dem Spiel (web-client/auftraege.js), damit die Auswahl überall gleich aussieht.
+  const zeichen = m => window.Auftraege ? window.Auftraege.badge(m, {size: 22}) + ' ' : '';
+  const mond = mondBei(k);
+  menue(x, y, `<b class="menue-kopf">Flotte nach ${esc(k)}</b>` + MISSIONEN.filter(([m]) => m !== 'verstaerken' || 'invasionen' in (spielView() || {})).map(([m, n]) => `<button data-m="${m}" class="menue-auftrag">${zeichen(m)}${n}</button>`).join('')
+    + (mond ? `<button data-mond class="menue-auftrag">☾ Mond ${esc(mond.name || '')} anfliegen</button>` : ''), el => {
+    el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => flotte(k, b.dataset.m));
+    const mb = el.querySelector('[data-mond]'); if (mb) mb.onclick = () => flotteMond(k);
+  });
+}
+
+function menue(x, y, html, binden) {
+  const m = $('menue');
+  m.innerHTML = html; m.hidden = false;
+  const b = Math.min(innerWidth - 16, 300);
+  m.style.width = b + 'px';
+  m.style.left = Math.max(8, Math.min(x - b / 2, innerWidth - b - 8)) + 'px';
+  requestAnimationFrame(() => { const h = m.offsetHeight; m.style.top = Math.max(8, Math.min(y + 12, innerHeight - h - 8)) + 'px'; });
+  binden?.(m);
+}
+function menueZu() { $('menue').hidden = true; }
+document.addEventListener('pointerdown', e => { if (!$('menue').hidden && !e.composedPath().includes($('menue'))) menueZu(); }, true);
+
+// Planetenname aus dem Spiel (planetenname.js): eigene und verbündete Planeten, sonst ''.
+const planetName = k => { try { const P = window.Planetenname; const e = P?.eigen(k); return e ? P.name(e) : P?.zuKoord(k) || ''; } catch { return ''; } };
+
+function koordMenue(k, x, y, kontext = '') {
+  brumm();
+  const pn = planetName(k), eigen = imSpiel() && !!window.Planetenname?.eigen(k);
+  menue(x, y, `<b class="menue-kopf">📍 ${pn ? esc(pn) + ' ' : ''}${esc(k)}${kontext ? ' · ' + esc(kontext) : ''}</b>
+    <button data-a="kopieren">Kopieren</button>
+    <button data-a="merken">Bei Zielen merken</button>
+    ${imSpiel() ? '<button data-a="flotte">Flotte hierhin …</button><button data-a="spionage">Ausspähen (Sonde)</button>' : ''}
+    <button data-a="notiz">In Notiz übernehmen</button>
+    ${eigen ? '<button data-a="umbenennen">Planet umbenennen …</button>' : ''}`, el => {
+    el.querySelector('[data-a=kopieren]').onclick = () => { kopieren(k); menueZu(); };
+    el.querySelector('[data-a=merken]').onclick = () => { merken(k, kontext); menueZu(); };
+    el.querySelector('[data-a=notiz]').onclick = () => { menueZu(); notizMitKoord(k, kontext); };
+    const f = el.querySelector('[data-a=flotte]'); if (f) f.onclick = () => missionWahl(k, x, y);
+    const s = el.querySelector('[data-a=spionage]'); if (s) s.onclick = () => flotte(k, 'spionage');
+    const u = el.querySelector('[data-a=umbenennen]'); if (u) u.onclick = () => { menueZu(); window.Planetenname.oeffnen(k); };
+  });
+}
+
+// Langes Drücken auf eine sichtbare Koordinate im Spiel öffnet das Koordinatenmenü.
+document.addEventListener('contextmenu', e => {
+  if (e.composedPath().includes(wirt)) return;
+  const t = e.target;
+  if (t && (t.closest?.('input,textarea,[contenteditable=true]'))) return;
+  const r = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+  let k = null;
+  if (r && r.startContainer.nodeType === 3) {
+    const text = r.startContainer.textContent, o = r.startOffset;
+    for (const m of text.matchAll(KOORD)) if (!istZeit(m[0]) && o >= m.index - 1 && o <= m.index + m[0].length + 1) { k = m[0]; break; }
+  }
+  if (!k && t?.closest) {
+    // Kleines Element (Knopf, Zelle, Überschrift) mit genau einer Koordinate.
+    const el = t.closest('button,td,th,h3,h4,li,a,span,p,summary,strong') || t;
+    if (el.offsetParent !== null) { const ks = koordinaten(el.innerText).filter((v, i, a) => a.indexOf(v) === i); if (ks.length === 1 && el.innerText.length < 160) k = ks[0]; }
+  }
+  if (!k) return;
+  e.preventDefault();
+  getSelection()?.removeAllRanges();
+  koordMenue(k, e.clientX, e.clientY);
+}, true);
+
+// Zielhilfe: Beim Tippen ins Zielfeld der Flotte erscheinen Zwischenablage und gemerkte Ziele.
+let zielFeld = null;
+document.addEventListener('focusin', e => {
+  const f = e.target;
+  if (!(f instanceof HTMLInputElement) || f.name !== 'ziel' || !f.closest('#fleet')) return;
+  zielFeld = f; zielleiste();
+});
+function zielleisteZu() { $('zielleiste').hidden = true; if ($('blatt').hidden) $('fab').hidden = START; }
+document.addEventListener('focusout', e => { if (e.target === zielFeld) setTimeout(() => { if (document.activeElement !== zielFeld) zielleisteZu(); }, 250); });
+function zielSetzen(k) {
+  if (!zielFeld) return;
+  zielFeld.value = k;
+  zielFeld.dispatchEvent(new Event('input', {bubbles: true}));
+  zielFeld.dispatchEvent(new Event('change', {bubbles: true}));
+  zuletztBenutzt(k); brumm();
+  zielleisteZu(); zielFeld.blur();
+}
+function zielleiste() {
+  let ablageK = '';
+  try { ablageK = koordinaten(app.einfuegen())[0] || ''; } catch {}
+  const liste = [...ziele().liste].sort((a, b) => (b.zuletzt || 0) - (a.zuletzt || 0)).slice(0, 8);
+  const leiste = $('zielleiste');
+  leiste.innerHTML = (ablageK ? `<button class="chip gold" data-k="${esc(ablageK)}">📋 ${esc(ablageK)}</button>` : '') +
+    liste.map(z => `<button class="chip" data-k="${esc(z.k)}">${esc(z.k)}${z.name ? ' · ' + esc(z.name) : ''}</button>`).join('') +
+    (!ablageK && !liste.length ? '<span class="matt">Noch keine Ziele gemerkt – Koordinaten im Spiel lange drücken.</span>' : '');
+  leiste.hidden = false; $('fab').hidden = true;
+  leiste.querySelectorAll('[data-k]').forEach(b => b.onpointerdown = ev => { ev.preventDefault(); zielSetzen(b.dataset.k); });
+}
+
+// ------------------------------------------------------------------ Spionageordner: jeden Bericht automatisch ablegen
+const summe = o => Object.values(o || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+let letzteBerichte = null;
+function berichteErfassen() {
+  const v = spielView(), w = spielWelt();
+  if (!v || !Array.isArray(v.berichte) || v.berichte === letzteBerichte) return;
+  letzteBerichte = v.berichte;
+  const s = spionage(); let neu = 0;
+  for (const b of v.berichte) {
+    if (!b || typeof b.ziel !== 'string' || !koordinaten(b.ziel).length) continue;
+    const daten = {bestand: b.bestand || null, schiffe: b.schiffe || null, verteidigung: b.verteidigung || null, gebaeude: b.gebaeude || null, forschung: b.forschung || null};
+    const key = b.ziel + '|' + hash(JSON.stringify(daten));
+    const vorhanden = s.berichte[key];
+    if (vorhanden) { vorhanden.gesehen = jetzt(); continue; }
+    s.berichte[key] = {ziel: b.ziel, besitzer: String(b.besitzer || ''), spielzeit: w ? (w.sekunden || 0) - (Number(b.alter_stunden) || 0) * 3600 : null,
+      erfasst: jetzt(), gesehen: jetzt(), daten, aufklaerung: b.aufklaerung ?? null, ordner: [], notiz: '', stern: false};
+    neu++;
+  }
+  // Höchstens 3000 Berichte: die ältesten ohne Stern, Ordner oder Notiz fallen weg.
+  const keys = Object.keys(s.berichte);
+  if (keys.length > 3000) keys.filter(k => !s.berichte[k].stern && !s.berichte[k].ordner.length && !s.berichte[k].notiz)
+    .sort((a, b) => s.berichte[a].erfasst - s.berichte[b].erfasst).slice(0, keys.length - 3000).forEach(k => delete s.berichte[k]);
+  if (neu) { speichern('spionage'); if (!$('blatt').hidden && reiter === 'spionage') zeichnen(); else toast(`${neu} neue${neu === 1 ? 'r' : ''} Spionagebericht${neu === 1 ? '' : 'e'} abgelegt`); }
+}
+if (!START) setInterval(berichteErfassen, 4000);
+
+// Neue Spieler ohne Platz: einmal sanft zur Volkswahl führen (sie steht sonst weit unten).
+let platzGezeigt = false, platzErledigt = false;
+if (!START) setInterval(() => {
+  if (platzErledigt) return;
+  let s = null; try { s = typeof session !== 'undefined' ? session : null; } catch {}
+  const f = document.getElementById('claim');
+  if (!platzGezeigt && s && !s.spieler && f && f.offsetParent !== null) {
+    platzGezeigt = true;
+    (document.getElementById('claim-panel') || f).scrollIntoView({behavior: 'smooth', block: 'start'});
+    toast('Wähle dein Volk und wie du spielst, dann „Jetzt mitspielen“ – dann gehört dir ein Heimatplanet.');
+  } else if (s?.spieler) {
+    // Gerade beigetreten: zurück nach oben zur Übersicht des neuen Reichs.
+    if (platzGezeigt) scrollTo({top: 0, behavior: 'smooth'});
+    platzErledigt = true;
+  }
+}, 1500);
+
+// Meldungen des Spiels erscheinen unten rechts: solange tritt der ◆-Knopf zurück.
+if (!START) {
+  const meldung = document.getElementById('message');
+  if (meldung) new MutationObserver(() => $('fab').classList.toggle('leise', !meldung.hidden)).observe(meldung, {attributes: true, attributeFilter: ['hidden']});
+}
+
+let spFilter = {ordner: '', suche: '', sort: 'neu'};
+function spionageZeigen() {
+  const s = spionage();
+  const alle = Object.entries(s.berichte).map(([key, b]) => ({key, ...b}));
+  // Je Ziel der neueste Bericht oben, ältere als Verlauf darunter.
+  const jeZiel = {};
+  for (const b of alle) (jeZiel[b.ziel] ||= []).push(b);
+  for (const l of Object.values(jeZiel)) l.sort((a, b) => (b.spielzeit ?? b.erfasst) - (a.spielzeit ?? a.erfasst));
+  let gruppen = Object.values(jeZiel);
+  const q = spFilter.suche.toLowerCase();
+  gruppen = gruppen.filter(g => {
+    const n = g[0];
+    if (spFilter.ordner === '★') { if (!g.some(b => b.stern)) return false; }
+    else if (spFilter.ordner && !g.some(b => b.ordner.includes(spFilter.ordner))) return false;
+    return !q || (n.ziel + ' ' + n.besitzer + ' ' + g.map(b => b.notiz).join(' ')).toLowerCase().includes(q);
+  });
+  const wert = b => summe(b.daten.bestand), wehr = b => summe(b.daten.schiffe) + summe(b.daten.verteidigung);
+  gruppen.sort(spFilter.sort === 'beute' ? (a, b) => wert(b[0]) - wert(a[0]) : spFilter.sort === 'schwach' ? (a, b) => wehr(a[0]) - wehr(b[0]) || wert(b[0]) - wert(a[0])
+    : spFilter.sort === 'ziel' ? (a, b) => a[0].ziel.localeCompare(b[0].ziel, 'de', {numeric: true}) : (a, b) => b[0].erfasst - a[0].erfasst);
+  const v = spielView();
+  $('inhalt').innerHTML = `<div class="werkzeug">
+      <input id="sp-suche" type="search" placeholder="Suchen: Spieler, Koordinate, Notiz" value="${esc(spFilter.suche)}">
+      <select id="sp-sort"><option value="neu">Neueste</option><option value="beute">Meiste Ressourcen</option><option value="schwach">Schwächste Abwehr</option><option value="ziel">Nach Koordinate</option></select>
+    </div>
+    <div class="chips">${['', '★', ...s.ordner].map(o => `<button class="chip ${spFilter.ordner === o ? 'an' : ''}" data-o="${esc(o)}">${o === '' ? 'Alle' : esc(o)}</button>`).join('')}<button class="chip" id="sp-ordner-neu">＋ Ordner</button></div>
+    <p class="matt">${alle.length} ${alle.length === 1 ? 'Bericht' : 'Berichte'} zu ${Object.keys(jeZiel).length} ${Object.keys(jeZiel).length === 1 ? 'Ziel' : 'Zielen'}${START ? ' · im Spiel werden neue Berichte automatisch abgelegt' : v ? ' · neue Berichte werden automatisch abgelegt' : ''}</p>
+    ${gruppen.length ? gruppen.slice(0, 150).map(g => berichtKarte(g, s)).join('') : '<p class="leer">Noch keine Spionageberichte. Schicke Sonden (Auftrag „Ausspähen“) – jeder Bericht landet automatisch hier.</p>'}`;
+  $('sp-sort').value = spFilter.sort;
+  $('sp-sort').onchange = () => { spFilter.sort = $('sp-sort').value; spionageZeigen(); };
+  $('sp-suche').oninput = () => { spFilter.suche = $('sp-suche').value; clearTimeout(spFilter.t); spFilter.t = setTimeout(() => { spionageZeigen(); const i = $('sp-suche'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
+  $('inhalt').querySelectorAll('[data-o]').forEach(b => b.onclick = () => { spFilter.ordner = b.dataset.o; spionageZeigen(); });
+  $('sp-ordner-neu').onclick = () => { const n = prompt('Name des neuen Ordners'); if (n && n.trim()) { s.ordner.push(n.trim().slice(0, 30)); speichern('spionage'); spionageZeigen(); } };
+  $('inhalt').querySelectorAll('[data-b]').forEach(el => {
+    const b = s.berichte[el.dataset.b];
+    el.querySelector('[data-a=flotte]').onclick = ev => missionWahl(b.ziel, ev.clientX, ev.clientY);
+    el.querySelector('[data-a=sonde]').onclick = () => flotte(b.ziel, 'spionage');
+    el.querySelector('[data-a=kopieren]').onclick = () => kopieren(b.ziel);
+    el.querySelector('[data-a=stern]').onclick = () => { b.stern = !b.stern; speichern('spionage'); spionageZeigen(); };
+    el.querySelector('[data-a=ordner]').onclick = ev => menue(ev.clientX, ev.clientY, `<b class="menue-kopf">Ordner für ${esc(b.ziel)}</b>` +
+      s.ordner.map(o => `<button data-o="${esc(o)}">${b.ordner.includes(o) ? '✓ ' : ''}${esc(o)}</button>`).join(''), m => m.querySelectorAll('[data-o]').forEach(x => x.onclick = () => {
+        const o = x.dataset.o; b.ordner = b.ordner.includes(o) ? b.ordner.filter(y => y !== o) : [...b.ordner, o]; speichern('spionage'); menueZu(); spionageZeigen();
+      }));
+    el.querySelector('[data-a=notiz]').onclick = () => { const n = prompt('Notiz zu diesem Ziel', b.notiz || ''); if (n !== null) { b.notiz = n.slice(0, 2000); speichern('spionage'); spionageZeigen(); } };
+    el.querySelector('[data-a=md]').onclick = () => berichtAlsNotiz(b);
+    el.querySelector('[data-a=teilen]').onclick = () => { try { app.teilen('Spionagebericht ' + b.ziel, berichtText(b)); } catch (e) { toast(e.message, true); } };
+    el.querySelector('[data-a=weg]').onclick = () => { if (confirm('Diesen Bericht aus dem Ordner entfernen?')) { delete s.berichte[el.dataset.b]; speichern('spionage'); spionageZeigen(); } };
+  });
+}
+// Bezeichnungen wie im Spiel (label() aus app.js), sonst lesbar aus dem Schlüssel.
+const NAMEN = s => { try { if (typeof label === 'function') return label(s); } catch {} return String(s).replaceAll('_', ' ').replace(/\b\w/g, c => c.toUpperCase()); };
+const liste = o => Object.entries(o || {}).filter(([, n]) => Number(n)).map(([k, n]) => `${NAMEN(k)} ${zahl(n)}`).join(' · ');
+function alter(b) {
+  const w = spielWelt();
+  if (w && b.spielzeit != null) { const h = Math.max(0, Math.round((w.sekunden - b.spielzeit) / 3600)); return h < 1 ? 'gerade eben' : h < 48 ? `vor ${h} h` : `vor ${Math.round(h / 24)} Tagen`; }
+  return new Date(b.erfasst).toLocaleString('de-DE', {dateStyle: 'short', timeStyle: 'short'});
+}
+function berichtKarte(g, s) {
+  const b = g[0], key = Object.keys(s.berichte).find(k => s.berichte[k] === s.berichte[b.key]) || b.key;
+  const vor = g[1];
+  const diff = vor ? summe(b.daten.bestand) - summe(vor.daten.bestand) : 0;
+  const wehr = summe(b.daten.schiffe) + summe(b.daten.verteidigung);
+  return `<article class="karte" data-b="${esc(key)}">
+    <div class="kopfzeile"><button class="koord" data-a="kopieren">${esc(b.ziel)}</button><b>${planetName(b.ziel) ? esc(planetName(b.ziel)) + ' · ' : ''}${esc(b.besitzer || 'Unbekannt')}</b>
+      <button class="stern ${b.stern ? 'an' : ''}" data-a="stern" aria-label="Markieren">★</button></div>
+    <p class="matt">${alter(b)}${g.length > 1 ? ` · ${g.length} Berichte${diff ? ` · Ressourcen ${diff > 0 ? '+' : ''}${zahl(diff)} seit dem letzten` : ''}` : ''}${b.ordner.length ? ' · ' + b.ordner.map(esc).join(', ') : ''}</p>
+    <p><span class="label">Ressourcen</span> ${liste(b.daten.bestand) || '–'} <b class="summe">Σ ${zahl(summe(b.daten.bestand))}</b></p>
+    <p><span class="label">Flotte</span> ${b.daten.schiffe ? liste(b.daten.schiffe) || 'keine' : '<i>nicht erkannt</i>'}</p>
+    <p><span class="label">Abwehr</span> ${b.daten.verteidigung ? liste(b.daten.verteidigung) || 'keine' : '<i>nicht erkannt</i>'} ${wehr === 0 && b.daten.schiffe && b.daten.verteidigung ? '<span class="gut">ungeschützt</span>' : ''}</p>
+    ${b.daten.gebaeude ? `<details><summary>Gebäude und Forschung</summary><p>${liste(b.daten.gebaeude)}</p>${b.daten.forschung ? `<p>${liste(b.daten.forschung)}</p>` : ''}</details>` : ''}
+    ${b.notiz ? `<p class="notiz">✎ ${esc(b.notiz)}</p>` : ''}
+    <div class="knoepfe">
+      ${imSpiel() ? '<button data-a="flotte" class="haupt">🚀 Flotte</button><button data-a="sonde">👁 Sonde</button>' : '<button data-a="flotte" hidden></button><button data-a="sonde" hidden></button>'}
+      <button data-a="ordner">📁</button><button data-a="notiz">✎</button><button data-a="md">→ Notiz</button><button data-a="teilen">Teilen</button><button data-a="weg">🗑</button>
+    </div></article>`;
+}
+function berichtText(b) {
+  return `Spionagebericht ${b.ziel} (${b.besitzer || 'unbekannt'}), ${alter(b)}\nRessourcen: ${liste(b.daten.bestand) || '–'}\nFlotte: ${liste(b.daten.schiffe) || '–'}\nAbwehr: ${liste(b.daten.verteidigung) || '–'}`
+    + (b.daten.gebaeude ? `\nGebäude: ${liste(b.daten.gebaeude)}` : '') + (b.notiz ? `\nNotiz: ${b.notiz}` : '');
+}
+function berichtAlsNotiz(b) {
+  const pfad = `Spionage/${b.ziel.replaceAll(':', '-')} ${dateiname(b.besitzer || 'unbekannt')}.md`;
+  const tabelle = (titel, o) => o ? `\n### ${titel}\n| | |\n|---|---:|\n${Object.entries(o).filter(([, n]) => Number(n)).map(([k, n]) => `| ${NAMEN(k)} | ${zahl(n)} |`).join('\n') || '| keine | |'}\n` : '';
+  const block = `## Bericht ${spielTag() ? 'Tag ' + spielTag() : new Date().toLocaleDateString('de-DE')} (${alter(b)})\nZiel ${b.ziel} · Besitzer [[${b.besitzer || 'unbekannt'}]] #spionage\n`
+    + tabelle('Ressourcen', b.daten.bestand) + tabelle('Flotte', b.daten.schiffe) + tabelle('Abwehr', b.daten.verteidigung) + tabelle('Gebäude', b.daten.gebaeude)
+    + (b.notiz ? `\n> ${b.notiz}\n` : '');
+  const n = notizen().find(x => x.pfad === pfad);
+  const text = n ? n.text.trimEnd() + '\n\n' + block : `# ${b.ziel} – ${b.besitzer || 'unbekannt'}\n\n${block}`;
+  notizSpeichern(pfad, text, true);
+  reiter = 'notizen'; offeneNotiz = pfad; zeichnen();
+  toast('Als Notiz abgelegt');
+}
+
+// ------------------------------------------------------------------ Ziele (Koordinatenablage)
+function zieleZeigen() {
+  const z = ziele();
+  const l = [...z.liste].sort((a, b) => (b.zuletzt || 0) - (a.zuletzt || 0));
+  $('inhalt').innerHTML = `<div class="werkzeug"><input id="z-neu" placeholder="Koordinate, z. B. 1:27:6" inputmode="numeric"><input id="z-name" placeholder="Name (optional)"><button class="knopf" id="z-hinzu">Merken</button></div>
+    <div class="chips"><button class="chip" id="z-ablage">📋 Aus Zwischenablage</button></div>
+    <p class="matt">Tipp: Im Spiel jede Koordinate lange drücken → kopieren, merken oder direkt „Flotte hierhin“. Im Zielfeld der Flotte erscheinen deine Ziele als Knöpfe.</p>
+    ${l.length ? l.map(x => `<div class="zeile" data-id="${x.id}"><button class="koord" data-a="kopieren">${esc(x.k)}</button>
+      <div class="text"><b>${esc(x.name || planetName(x.k) || '–')}</b>${x.name && planetName(x.k) && planetName(x.k) !== x.name ? `<small>${esc(planetName(x.k))}</small>` : ''}${x.notiz ? `<small>${esc(x.notiz)}</small>` : ''}</div>
+      ${imSpiel() ? '<button class="knopf" data-a="flotte">🚀</button>' : ''}<button class="knopf" data-a="bearbeiten">✎</button><button class="knopf" data-a="weg">🗑</button></div>`).join('')
+      : '<p class="leer">Noch keine Ziele gemerkt.</p>'}`;
+  const neu = () => {
+    const k = koordinaten($('z-neu').value)[0];
+    if (!k) { toast('Bitte als Sektor:System:Planet eingeben, z. B. 1:27:6', true); return; }
+    merken(k, $('z-name').value.trim()); zieleZeigen();
+  };
+  $('z-hinzu').onclick = neu;
+  $('z-neu').onkeydown = e => { if (e.key === 'Enter') neu(); };
+  $('z-ablage').onclick = () => { const ks = koordinaten(app.einfuegen()); if (!ks.length) { toast('Keine Koordinate in der Zwischenablage', true); return; } ks.forEach(k => merken(k)); zieleZeigen(); };
+  $('inhalt').querySelectorAll('[data-id]').forEach(el => {
+    const x = z.liste.find(y => y.id === el.dataset.id);
+    el.querySelector('[data-a=kopieren]').onclick = () => kopieren(x.k);
+    const f = el.querySelector('[data-a=flotte]'); if (f) f.onclick = ev => missionWahl(x.k, ev.clientX, ev.clientY);
+    el.querySelector('[data-a=bearbeiten]').onclick = () => {
+      const n = prompt('Name', x.name || ''); if (n === null) return;
+      const no = prompt('Notiz', x.notiz || ''); x.name = n.trim().slice(0, 40); if (no !== null) x.notiz = no.slice(0, 500); speichern('koordinaten'); zieleZeigen();
+    };
+    el.querySelector('[data-a=weg]').onclick = () => { z.liste = z.liste.filter(y => y !== x); speichern('koordinaten'); zieleZeigen(); };
+  });
+}
+
+// ------------------------------------------------------------------ Plan mit Erinnerungen
+function planZeigen() {
+  const p = plan();
+  const offen = p.aufgaben.filter(a => !a.erledigt).sort((a, b) => (a.faellig || 9e15) - (b.faellig || 9e15));
+  const fertig = p.aufgaben.filter(a => a.erledigt).sort((a, b) => b.erledigt - a.erledigt).slice(0, 30);
+  const zeit = a => a.faellig ? new Date(a.faellig).toLocaleString('de-DE', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : '';
+  const zeile = a => `<div class="zeile ${a.erledigt ? 'erledigt' : ''} ${a.faellig && !a.erledigt && a.faellig < jetzt() ? 'faellig' : ''}" data-id="${a.id}">
+      <button class="haken" data-a="haken">${a.erledigt ? '✓' : ''}</button>
+      <div class="text"><b>${verlinken(a.text)}</b>${a.faellig ? `<small>${a.erinnern ? '🔔 ' : ''}${zeit(a)}</small>` : ''}</div>
+      <button class="knopf" data-a="weg">🗑</button></div>`;
+  $('inhalt').innerHTML = `<div class="werkzeug spalte"><input id="p-text" placeholder="Neue Aufgabe, z. B. Flotte von 1:27:6 zurückholen">
+      <div class="chips"><button class="chip" data-in="0">ohne Zeit</button><button class="chip" data-in="15">in 15 min</button><button class="chip" data-in="60">in 1 h</button>
+      <button class="chip" data-in="240">in 4 h</button><button class="chip" data-in="480">in 8 h</button><button class="chip" data-in="frei">Zeitpunkt …</button></div>
+      <input id="p-zeit" type="datetime-local" hidden><label class="matt"><input type="checkbox" id="p-erinnern" checked> mit Erinnerung (Benachrichtigung)</label></div>
+    <h4>Offen (${offen.length})</h4>${offen.map(zeile).join('') || '<p class="leer">Nichts offen. Plane Bauaufträge, Flottenrückkehr oder Verabredungen mit Verbündeten.</p>'}
+    ${fertig.length ? `<details><summary>Erledigt (${fertig.length})</summary>${fertig.map(zeile).join('')}</details>` : ''}
+    <button class="knopf breit" id="p-export">Plan als Notiz speichern</button>`;
+  const anlegen = minuten => {
+    const text = $('p-text').value.trim();
+    if (!text) { $('p-text').focus(); toast('Zuerst die Aufgabe eintragen', true); return; }
+    let faellig = null;
+    if (minuten === 'frei') { const i = $('p-zeit'); if (i.hidden) { i.hidden = false; i.focus(); i.showPicker?.(); return; } faellig = i.value ? new Date(i.value).getTime() : null; }
+    else if (Number(minuten)) faellig = jetzt() + Number(minuten) * 60000;
+    const a = {id: uid(), text: text.slice(0, 500), faellig, erinnern: !!faellig && $('p-erinnern').checked, erstellt: jetzt(), erledigt: 0};
+    p.aufgaben.push(a); speichern('plan', true);
+    if (a.erinnern) try { sync('erinnern', JSON.stringify({id: a.id, zeit_ms: a.faellig, titel: 'Sternenepoche – Plan', text: a.text})); } catch (e) { toast(e.message, true); }
+    planZeigen(); toast(a.faellig ? 'Aufgabe mit Erinnerung angelegt' : 'Aufgabe angelegt');
+  };
+  $('inhalt').querySelectorAll('[data-in]').forEach(b => b.onclick = () => anlegen(b.dataset.in));
+  $('p-zeit').onchange = () => anlegen('frei');
+  $('p-text').onkeydown = e => { if (e.key === 'Enter') anlegen(0); };
+  $('inhalt').querySelectorAll('[data-id]').forEach(el => {
+    const a = p.aufgaben.find(x => x.id === el.dataset.id);
+    el.querySelector('[data-a=haken]').onclick = () => { a.erledigt = a.erledigt ? 0 : jetzt(); if (a.erledigt && a.erinnern) try { app.erinnerungLoeschen(a.id); } catch {} brumm(); speichern('plan'); planZeigen(); };
+    el.querySelector('[data-a=weg]').onclick = () => { if (a.erinnern) try { app.erinnerungLoeschen(a.id); } catch {} p.aufgaben = p.aufgaben.filter(x => x !== a); speichern('plan'); planZeigen(); };
+    koordKnoepfe(el);
+  });
+  $('p-export').onclick = () => {
+    const md = `# Plan ${spielTag() ? '(Tag ' + spielTag() + ')' : ''}\n\n` + offen.map(a => `- [ ] ${a.text}${a.faellig ? ' – ' + zeit(a) : ''}`).join('\n') + '\n\n' + fertig.map(a => `- [x] ${a.text}`).join('\n') + '\n';
+    notizSpeichern('Plan.md', md, true); reiter = 'notizen'; offeneNotiz = 'Plan.md'; zeichnen();
+  };
+}
+
+// ------------------------------------------------------------------ Notizen (Markdown wie Obsidian)
+let notizCache = null, offeneNotiz = null, vorschau = true, notizSuche = '';
+function notizen(neu = false) {
+  if (!notizCache || neu) { try { notizCache = sync('notizListe'); } catch (e) { toast(e.message, true); notizCache = []; } }
+  return notizCache;
+}
+const dateiname = s => String(s).replace(/[\\/:*?"<>|#\[\]]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Ohne Titel';
+const titel = pfad => pfad.replace(/\.md$/, '').split('/').pop();
+function notizSpeichern(pfad, text, sofort = false) {
+  const n = notizen().find(x => x.pfad === pfad);
+  if (n) { n.text = text; n.geaendert = jetzt(); } else notizCache.push({pfad, text, geaendert: jetzt()});
+  clearTimeout(notizSpeichern.t);
+  const tun = () => { try { sync('notizSchreiben', pfad, text); } catch (e) { toast('Notiz nicht gespeichert: ' + e.message, true); } };
+  if (sofort) tun(); else notizSpeichern.t = setTimeout(tun, 600);
+}
+const links = text => [...String(text).matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(m => m[1].trim());
+const tags = text => [...String(text).matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]{2,40})/gu)].map(m => m[1]);
+const findeNotiz = name => { const n = name.toLowerCase(); return notizen().find(x => titel(x.pfad).toLowerCase() === n || x.pfad.toLowerCase() === n + '.md' || x.pfad.toLowerCase() === n); };
+
+/** Koordinaten im Text werden zu Knöpfen (Flotte, kopieren); Verweise zu Links. */
+function verlinken(t) {
+  return esc(t).replace(KOORD, (m) => istZeit(m) ? m : `<button class="koord klein" data-koord="${m}">${m}</button>`);
+}
+function koordKnoepfe(el) {
+  el.querySelectorAll('[data-koord]').forEach(b => b.onclick = ev => { ev.stopPropagation(); koordMenue(b.dataset.koord, ev.clientX, ev.clientY); });
+}
+function markdown(md) {
+  const zeilen = String(md).replace(/\r/g, '').split('\n');
+  let html = '', inListe = false, inCode = false, tabelle = [];
+  const inline = s => verlinken(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>')
+    .replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (m, z, a) => `<a class="wiki ${findeNotiz(z.split('#')[0].trim()) ? '' : 'neu'}" data-wiki="${z.split('#')[0].trim()}">${a || z}</a>`)
+    .replace(/(^|\s)#([\p{L}\p{N}_/-]{2,40})/gu, '$1<a class="tag" data-tag="$2">#$2</a>')
+    .replace(/\bhttps?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+  const tabelleAus = () => {
+    if (!tabelle.length) return;
+    const zellen = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    const kopf = zellen(tabelle[0]), rest = tabelle.slice(tabelle[1] && /^[\s|:-]+$/.test(tabelle[1]) ? 2 : 1);
+    html += `<table><thead><tr>${kopf.map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rest.map(r => `<tr>${zellen(r).map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    tabelle = [];
+  };
+  zeilen.forEach((z, i) => {
+    if (z.startsWith('```')) { tabelleAus(); if (inListe) { html += '</ul>'; inListe = false; } html += inCode ? '</pre>' : '<pre>'; inCode = !inCode; return; }
+    if (inCode) { html += esc(z) + '\n'; return; }
+    if (/^\s*\|.*\|\s*$/.test(z)) { if (inListe) { html += '</ul>'; inListe = false; } tabelle.push(z.trim()); return; }
+    tabelleAus();
+    const li = z.match(/^\s*[-*]\s+(\[( |x|X)\]\s+)?(.*)$/);
+    if (li) {
+      if (!inListe) { html += '<ul>'; inListe = true; }
+      html += li[1] ? `<li class="aufgabe"><button class="haken klein" data-zeile="${i}">${li[2] !== ' ' ? '✓' : ''}</button><span class="${li[2] !== ' ' ? 'erledigt' : ''}">${inline(li[3])}</span></li>` : `<li>${inline(li[3])}</li>`;
+      return;
+    }
+    if (inListe) { html += '</ul>'; inListe = false; }
+    const h = z.match(/^(#{1,4})\s+(.*)$/);
+    if (h) html += `<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`;
+    else if (z.startsWith('> ')) html += `<blockquote>${inline(z.slice(2))}</blockquote>`;
+    else if (/^---+$/.test(z.trim())) html += '<hr>';
+    else if (z.trim()) html += `<p>${inline(z)}</p>`;
+  });
+  tabelleAus();
+  if (inListe) html += '</ul>';
+  if (inCode) html += '</pre>';
+  return html;
+}
+
+function notizenZeigen() {
+  if (offeneNotiz) return notizBearbeiten(offeneNotiz);
+  const alle = notizen(true);
+  const q = notizSuche.toLowerCase();
+  const tagFilter = q.startsWith('#') ? q.slice(1) : '';
+  const treffer = alle.filter(n => !q || (tagFilter ? tags(n.text).some(t => t.toLowerCase() === tagFilter) : (n.pfad + ' ' + n.text).toLowerCase().includes(q)))
+    .sort((a, b) => b.geaendert - a.geaendert);
+  const alleTags = {}; alle.forEach(n => tags(n.text).forEach(t => alleTags[t] = (alleTags[t] || 0) + 1));
+  $('inhalt').innerHTML = `<div class="werkzeug"><input id="n-suche" type="search" placeholder="Suchen oder #Schlagwort" value="${esc(notizSuche)}"><button class="knopf" id="n-neu">＋ Neu</button></div>
+    <div class="chips"><button class="chip gold" id="n-heute">📅 ${spielTag() ? 'Logbuch Tag ' + spielTag() : 'Logbuch heute'}</button>
+      ${Object.entries(alleTags).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([t, n]) => `<button class="chip ${tagFilter === t.toLowerCase() ? 'an' : ''}" data-tag="${esc(t)}">#${esc(t)} <small>${n}</small></button>`).join('')}</div>
+    ${treffer.length ? treffer.map(n => `<button class="notiz-zeile" data-pfad="${esc(n.pfad)}"><b>${esc(titel(n.pfad))}</b>
+      <small>${esc(n.pfad.includes('/') ? n.pfad.replace(/\/[^/]*$/, '') + ' · ' : '')}${new Date(n.geaendert).toLocaleString('de-DE', {dateStyle: 'short', timeStyle: 'short'})} · ${links(n.text).length} Verweise</small>
+      <span>${esc(n.text.replace(/^#.*\n/, '').replace(/[#*>\[\]|`-]/g, ' ').slice(0, 140))}</span></button>`).join('')
+      : `<p class="leer">${alle.length ? 'Keine Treffer.' : 'Noch keine Notizen. Lege Notizen zu Spielern, Allianzen und Plänen an und verbinde sie mit [[Verweisen]] – der Graph zeigt dann dein Wissen als Netz.'}</p>`}`;
+  $('n-suche').oninput = () => { notizSuche = $('n-suche').value; clearTimeout(notizenZeigen.t); notizenZeigen.t = setTimeout(() => { notizenZeigen(); const i = $('n-suche'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
+  $('n-neu').onclick = () => { const t = prompt('Titel der Notiz (Ordner mit /, z. B. Spieler/Krath)'); if (t && t.trim()) neueNotiz(t.trim()); };
+  $('n-heute').onclick = () => {
+    const pfad = spielTag() ? `Logbuch/Tag ${spielTag()}.md` : `Logbuch/${new Date().toISOString().slice(0, 10)}.md`;
+    if (!findeNotiz(pfad.replace(/\.md$/, ''))) notizSpeichern(pfad, `# ${titel(pfad)}\n\n#logbuch\n\n- `, true);
+    offeneNotiz = pfad; vorschau = false; notizenZeigen();
+  };
+  $('inhalt').querySelectorAll('[data-tag]').forEach(b => b.onclick = () => { notizSuche = '#' + b.dataset.tag; notizenZeigen(); });
+  $('inhalt').querySelectorAll('[data-pfad]').forEach(b => b.onclick = () => { offeneNotiz = b.dataset.pfad; vorschau = true; notizenZeigen(); });
+}
+function neueNotiz(name, inhalt) {
+  const pfad = name.split('/').map(dateiname).join('/') + '.md';
+  if (!notizen().some(n => n.pfad === pfad)) notizSpeichern(pfad, inhalt ?? `# ${titel(pfad)}\n\n`, true);
+  offeneNotiz = pfad; vorschau = false; reiter = 'notizen'; zeichnen();
+}
+function notizMitKoord(k, kontext) {
+  const z = ziele().liste.find(x => x.k === k);
+  neueNotiz(`Ziele/${k.replaceAll(':', '-')}${z?.name ? ' ' + z.name : ''}`, `# Ziel ${k}${z?.name ? ' – ' + z.name : ''}\n\nKoordinate ${k} ${kontext ? '· ' + kontext : ''} #ziel\n\n- `);
+  oeffnen('notizen');
+}
+function notizBearbeiten(pfad) {
+  const n = notizen().find(x => x.pfad === pfad) || {pfad, text: ''};
+  const name = titel(pfad).toLowerCase();
+  const rueck = notizen().filter(x => x.pfad !== pfad && links(x.text).some(l => l.toLowerCase() === name || l.toLowerCase() + '.md' === pfad.toLowerCase()));
+  $('inhalt').innerHTML = `<div class="werkzeug"><button class="knopf" id="n-zurueck">‹ Notizen</button><b class="notiz-titel">${esc(titel(pfad))}</b>
+      <button class="knopf ${vorschau ? '' : 'an'}" id="n-modus">${vorschau ? '✎ Bearbeiten' : '👁 Ansehen'}</button><button class="knopf" id="n-mehr">⋯</button></div>
+    ${vorschau ? `<div class="md" id="n-md">${markdown(n.text) || '<p class="leer">Leer – tippe auf „Bearbeiten“.</p>'}</div>`
+      : `<div class="leiste-md"><button data-ein="[[]]" data-pos="2">[[ ]]</button><button data-ein="#">#</button><button data-ein="- [ ] ">☐</button><button data-ein="- ">•</button>
+          <button data-ein="**fett**">B</button><button id="n-koord">📍</button><button id="n-zeit">🕒</button></div>
+        <textarea id="n-text" spellcheck="true" placeholder="Schreibe in Markdown. [[Notizname]] verknüpft, #Schlagwort ordnet, 1:27:6 wird zum Ziel-Knopf.">${esc(n.text)}</textarea>
+        <div class="vorschlaege" id="n-vorschlaege" hidden></div>`}
+    ${rueck.length ? `<h4>Verweise hierher (${rueck.length})</h4>${rueck.map(r => `<button class="notiz-zeile klein" data-pfad="${esc(r.pfad)}"><b>${esc(titel(r.pfad))}</b></button>`).join('')}` : ''}`;
+  $('n-zurueck').onclick = () => { offeneNotiz = null; notizenZeigen(); };
+  $('n-modus').onclick = () => { vorschau = !vorschau; notizBearbeiten(pfad); };
+  $('n-mehr').onclick = ev => menue(ev.clientX, ev.clientY, `<b class="menue-kopf">${esc(titel(pfad))}</b><button data-a="umbenennen">Umbenennen / verschieben</button>
+      <button data-a="teilen">Teilen</button><button data-a="kopieren">Text kopieren</button><button data-a="loeschen">In den Papierkorb</button>`, m => {
+    m.querySelector('[data-a=umbenennen]').onclick = () => {
+      menueZu(); const neu = prompt('Neuer Name (Ordner mit /)', pfad.replace(/\.md$/, '')); if (!neu || !neu.trim()) return;
+      const ziel = neu.trim().split('/').map(dateiname).join('/') + '.md';
+      try { sync('notizUmbenennen', pfad, ziel); offeneNotiz = ziel; notizen(true); notizBearbeiten(ziel); } catch (e) { toast(e.message, true); }
+    };
+    m.querySelector('[data-a=teilen]').onclick = () => { menueZu(); app.teilen(titel(pfad), n.text); };
+    m.querySelector('[data-a=kopieren]').onclick = () => { menueZu(); kopieren(n.text); };
+    m.querySelector('[data-a=loeschen]').onclick = () => {
+      menueZu(); if (!confirm('Notiz in den Papierkorb legen?')) return;
+      try { sync('notizLoeschen', pfad); notizCache = notizCache.filter(x => x.pfad !== pfad); offeneNotiz = null; notizenZeigen(); } catch (e) { toast(e.message, true); }
+    };
+  });
+  $('inhalt').querySelectorAll('.notiz-zeile[data-pfad]').forEach(b => b.onclick = () => { offeneNotiz = b.dataset.pfad; vorschau = true; notizBearbeiten(offeneNotiz); });
+  if (vorschau) {
+    const md = $('n-md');
+    md.querySelectorAll('[data-wiki]').forEach(a => a.onclick = () => {
+      const ziel = findeNotiz(a.dataset.wiki);
+      if (ziel) { offeneNotiz = ziel.pfad; notizBearbeiten(ziel.pfad); } else neueNotiz(a.dataset.wiki);
+    });
+    md.querySelectorAll('[data-tag]').forEach(a => a.onclick = () => { notizSuche = '#' + a.dataset.tag; offeneNotiz = null; notizenZeigen(); });
+    md.querySelectorAll('[data-zeile]').forEach(b => b.onclick = () => {
+      const z = n.text.split('\n'), i = Number(b.dataset.zeile);
+      z[i] = z[i].replace(/\[( |x|X)\]/, m => m === '[ ]' ? '[x]' : '[ ]');
+      notizSpeichern(pfad, z.join('\n')); brumm(); notizBearbeiten(pfad);
+    });
+    koordKnoepfe(md);
+    return;
+  }
+  const ta = $('n-text');
+  const einfuegen = (s, pos) => {
+    const a = ta.selectionStart, b = ta.selectionEnd;
+    ta.setRangeText(s, a, b, 'end');
+    if (pos != null) ta.selectionStart = ta.selectionEnd = a + pos;
+    ta.focus(); ta.dispatchEvent(new Event('input'));
+  };
+  ta.oninput = () => { notizSpeichern(pfad, ta.value); vorschlagen(); };
+  $('inhalt').querySelectorAll('[data-ein]').forEach(b => b.onpointerdown = ev => { ev.preventDefault(); einfuegen(b.dataset.ein, b.dataset.pos != null ? Number(b.dataset.pos) : null); });
+  $('n-koord').onpointerdown = ev => {
+    ev.preventDefault();
+    let ks = []; try { ks = koordinaten(app.einfuegen()); } catch {}
+    const liste = [...new Set([...ks, ...ziele().liste.slice(0, 8).map(x => x.k)])];
+    if (!liste.length) { toast('Keine Koordinate in Zwischenablage oder Zielen', true); return; }
+    menue(ev.clientX, ev.clientY, '<b class="menue-kopf">Koordinate einfügen</b>' + liste.map(k => `<button data-k="${k}">${k}</button>`).join(''),
+      m => m.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { menueZu(); einfuegen(b.dataset.k); }));
+  };
+  $('n-zeit').onpointerdown = ev => { ev.preventDefault(); const w = spielWelt(); einfuegen(w ? `Tag ${spielTag()} ${new Date(w.sekunden * 1000).toISOString().slice(11, 16)}` : new Date().toLocaleString('de-DE', {dateStyle: 'short', timeStyle: 'short'})); };
+  // [[ tippen → passende Notizen vorschlagen.
+  function vorschlagen() {
+    const v = $('n-vorschlaege'), vor = ta.value.slice(0, ta.selectionStart), m = vor.match(/\[\[([^\]\n]*)$/);
+    if (!m) { v.hidden = true; return; }
+    const q = m[1].toLowerCase();
+    const l = notizen().map(x => titel(x.pfad)).filter(t => t.toLowerCase().includes(q)).slice(0, 6);
+    if (q && !l.some(t => t.toLowerCase() === q)) l.push(m[1] + ' (neu)');
+    v.innerHTML = l.map(t => `<button data-t="${esc(t.replace(/ \(neu\)$/, ''))}">${esc(t)}</button>`).join('');
+    v.hidden = !l.length;
+    v.querySelectorAll('[data-t]').forEach(b => b.onpointerdown = ev => {
+      ev.preventDefault();
+      const start = ta.selectionStart - m[1].length;
+      const nach = ta.value.slice(ta.selectionStart);
+      const schluss = nach.startsWith(']]') ? '' : ']]';
+      ta.setRangeText(b.dataset.t + schluss, start, ta.selectionStart, 'end');
+      if (!schluss) ta.selectionStart = ta.selectionEnd = ta.selectionStart + 2;
+      v.hidden = true; ta.focus(); notizSpeichern(pfad, ta.value);
+    });
+  }
+}
+
+// ------------------------------------------------------------------ Wissensgraph
+let graphLauf = null;
+function graphStopp() { if (graphLauf) { cancelAnimationFrame(graphLauf.raf); graphLauf = null; } }
+function graphZeigen() {
+  const alle = notizen(true);
+  $('inhalt').innerHTML = `<div class="graph-kopf"><span class="matt">${alle.length} Notizen · tippen öffnet, ziehen verschiebt, zwei Finger zoomen</span>
+    <label class="matt"><input type="checkbox" id="g-tags"> #Schlagworte</label></div><canvas id="graph"></canvas>`;
+  const cv = $('graph'), ctx = cv.getContext('2d');
+  const dpr = devicePixelRatio || 1;
+  const groesse = () => { const r = cv.getBoundingClientRect(); cv.width = r.width * dpr; cv.height = r.height * dpr; };
+  groesse();
+  const mitTags = () => $('g-tags').checked;
+  let knoten = [], kanten = [];
+  const aufbauen = () => {
+    const idx = {};
+    knoten = []; kanten = [];
+    const add = (id, name, art) => { if (idx[id] == null) { idx[id] = knoten.length; knoten.push({id, name, art, x: (Math.random() - .5) * 400, y: (Math.random() - .5) * 400, vx: 0, vy: 0, grad: 0}); } return idx[id]; };
+    alle.forEach(n => add(n.pfad.toLowerCase(), titel(n.pfad), 'notiz'));
+    alle.forEach(n => {
+      const a = idx[n.pfad.toLowerCase()];
+      links(n.text).forEach(l => { const z = findeNotiz(l); const b = z ? idx[z.pfad.toLowerCase()] : add('?' + l.toLowerCase(), l, 'fehlt'); if (a !== b) kanten.push([a, b]); });
+      if (mitTags()) tags(n.text).forEach(t => kanten.push([a, add('#' + t.toLowerCase(), '#' + t, 'tag')]));
+    });
+    kanten.forEach(([a, b]) => { knoten[a].grad++; knoten[b].grad++; });
+  };
+  aufbauen();
+  $('g-tags').onchange = () => { aufbauen(); waerme = 1; einpassen = true; };
+  let cam = {x: 0, y: 0, z: 1}, waerme = 1, einpassen = true;
+  const welt = (px, py) => ({x: (px * dpr - cv.width / 2) / cam.z / dpr - cam.x, y: (py * dpr - cv.height / 2) / cam.z / dpr - cam.y});
+  const schritt = () => {
+    if (waerme > .02) {
+      for (let i = 0; i < knoten.length; i++) for (let j = i + 1; j < knoten.length; j++) {
+        const a = knoten[i], b = knoten[j]; let dx = a.x - b.x, dy = a.y - b.y; const d2 = dx * dx + dy * dy + .01;
+        if (d2 > 90000) continue; const f = 900 / d2; a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+      }
+      kanten.forEach(([i, j]) => { const a = knoten[i], b = knoten[j]; const dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy) || 1; const f = (d - 70) * .02; a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f; });
+      knoten.forEach(k => { if (k.fest) return; k.vx -= k.x * .004; k.vy -= k.y * .004; k.x += k.vx * waerme; k.y += k.vy * waerme; k.vx *= .55; k.vy *= .55; });
+      waerme *= .985;
+    }
+    // Solange niemand die Ansicht bewegt: alles ins Bild einpassen.
+    if (einpassen && knoten.length) {
+      const xs = knoten.map(k => k.x), ys = knoten.map(k => k.y);
+      const b = Math.max(80, Math.max(...xs) - Math.min(...xs)), h = Math.max(80, Math.max(...ys) - Math.min(...ys));
+      const w = cv.width / dpr, hh = cv.height / dpr;
+      cam.z = Math.max(.25, Math.min(1.6, .78 * Math.min(w / b, hh / h)));
+      cam.x = -(Math.max(...xs) + Math.min(...xs)) / 2; cam.y = -(Math.max(...ys) + Math.min(...ys)) / 2;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(cam.z * dpr, 0, 0, cam.z * dpr, cv.width / 2 + cam.x * cam.z * dpr, cv.height / 2 + cam.y * cam.z * dpr);
+    ctx.strokeStyle = 'rgba(127,211,255,.28)'; ctx.lineWidth = 1 / cam.z;
+    ctx.beginPath(); kanten.forEach(([i, j]) => { ctx.moveTo(knoten[i].x, knoten[i].y); ctx.lineTo(knoten[j].x, knoten[j].y); }); ctx.stroke();
+    knoten.forEach(k => {
+      const r = 4 + Math.min(10, Math.sqrt(k.grad) * 2.4);
+      ctx.beginPath(); ctx.arc(k.x, k.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = k.art === 'tag' ? '#8fdca5' : k.art === 'fehlt' ? 'rgba(142,163,184,.45)' : k === graphLauf?.aktiv ? '#f3d9a6' : '#7fd3ff';
+      ctx.fill();
+      if (cam.z > .55 || k.grad > 2) { ctx.fillStyle = k.art === 'fehlt' ? '#8ea3b8' : '#e4ecf4'; ctx.font = `${12 / Math.max(.8, cam.z)}px system-ui`; ctx.textAlign = 'center'; ctx.fillText(k.name.slice(0, 28), k.x, k.y + r + 13 / Math.max(.8, cam.z)); }
+    });
+    graphLauf.raf = requestAnimationFrame(schritt);
+  };
+  graphLauf = {raf: 0, aktiv: null};
+  graphLauf.raf = requestAnimationFrame(schritt);
+  // Touch: ein Finger zieht Knoten oder Ansicht, zwei Finger zoomen, kurzer Tipp öffnet.
+  const finger = new Map(); let start = null, gezogen = null, pinch = null;
+  cv.onpointerdown = e => {
+    cv.setPointerCapture(e.pointerId); finger.set(e.pointerId, {x: e.offsetX, y: e.offsetY}); einpassen = false;
+    if (finger.size === 1) {
+      const p = welt(e.offsetX, e.offsetY);
+      gezogen = knoten.find(k => Math.hypot(k.x - p.x, k.y - p.y) < 16 / cam.z) || null;
+      start = {x: e.offsetX, y: e.offsetY, t: jetzt(), cx: cam.x, cy: cam.y};
+      if (gezogen) { gezogen.fest = true; graphLauf.aktiv = gezogen; }
+    } else if (finger.size === 2) { const [a, b] = [...finger.values()]; pinch = {d: Math.hypot(a.x - b.x, a.y - b.y), z: cam.z}; gezogen = null; }
+  };
+  cv.onpointermove = e => {
+    if (!finger.has(e.pointerId)) return;
+    finger.set(e.pointerId, {x: e.offsetX, y: e.offsetY});
+    if (pinch && finger.size === 2) { const [a, b] = [...finger.values()]; cam.z = Math.max(.25, Math.min(3, pinch.z * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d)); return; }
+    if (!start) return;
+    if (gezogen) { const p = welt(e.offsetX, e.offsetY); gezogen.x = p.x; gezogen.y = p.y; waerme = Math.max(waerme, .3); }
+    else { cam.x = start.cx + (e.offsetX - start.x) / cam.z; cam.y = start.cy + (e.offsetY - start.y) / cam.z; }
+  };
+  cv.onpointerup = cv.onpointercancel = e => {
+    finger.delete(e.pointerId);
+    if (finger.size < 2) pinch = null;
+    if (start && finger.size === 0) {
+      const kurz = jetzt() - start.t < 300 && Math.hypot(e.offsetX - start.x, e.offsetY - start.y) < 10;
+      if (gezogen) { gezogen.fest = false; if (kurz) { const k = gezogen; if (k.art === 'tag') { notizSuche = k.name; reiter = 'notizen'; zeichnen(); } else if (k.art === 'fehlt') neueNotiz(k.name); else { offeneNotiz = alle.find(n => n.pfad.toLowerCase() === k.id).pfad; vorschau = true; reiter = 'notizen'; zeichnen(); } } }
+      start = null; gezogen = null;
+    }
+  };
+  cv.onwheel = e => { e.preventDefault(); einpassen = false; cam.z = Math.max(.25, Math.min(3, cam.z * (e.deltaY < 0 ? 1.1 : .9))); };
+}
+
+// ------------------------------------------------------------------ Öffentliche Haken
+window.SternMobil = {
+  oeffnen,
+  // Zurück-Taste: erst Menü, dann offene Notiz, dann das Blatt schließen.
+  zurueck() {
+    if (!$('menue').hidden) { menueZu(); return true; }
+    if (!$('blatt').hidden) { if (offeneNotiz) { offeneNotiz = null; zeichnen(); } else schliessen(); return true; }
+    // Im Spiel: Themenblatt, offene Ebenen, vorige Seite, Übersicht (web-client/rahmen.js); erst danach die Startseite.
+    try { if (window.Rahmen && window.Rahmen.zurueck && window.Rahmen.zurueck()) return true; } catch (_) {}
+    return false;
+  },
+};
+})();
