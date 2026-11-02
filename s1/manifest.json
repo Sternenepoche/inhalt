@@ -7741,8 +7741,8 @@
    "sha256": "06310e44adece23cc1bd6f2f3879a58c9bb46810318b70d77da9ba60c0775657"
   },
   "web/bauseite.js": {
-   "bytes": 82383,
-   "sha256": "1b89d302526453dfe80f44fefd036106eefdb993e4d0cf0e49ba38674c60fb7d"
+   "bytes": 88450,
+   "sha256": "c75fad22a43a37cf3baef32afbfb612ac323708a4cf3f9bd5fe182ce5822f2f3"
   },
   "web/berichtszentrale.css": {
    "bytes": 26437,
@@ -8033,8 +8033,8 @@
    "sha256": "7dba87348a159ead0b2e6ca899fb82a82c7c827cf4ece78706b7beb9e1e568e7"
   },
   "web/management.js": {
-   "bytes": 58839,
-   "sha256": "0920e3d48e448c6d5e3a3e3cd87624e8bdf79ef37c5247fc03ed928c96dc8eca"
+   "bytes": 58846,
+   "sha256": "d00eba48e94325040dd17875c4b03f75e623f699f6580909b62fa31fa2572ef5"
   },
   "web/menue.css": {
    "bytes": 11728,
@@ -8053,8 +8053,8 @@
    "sha256": "84e3c455f4d5d58861070f372e27b1a00c5cdc5a0690f94f77829c3cea913fb8"
   },
   "web/mond.js": {
-   "bytes": 50862,
-   "sha256": "f9ebb0ba13c1e738b76f656b4325c5fbf4447d3402106dde2f3c2fd3a5f9cadf"
+   "bytes": 51273,
+   "sha256": "98f2bdfc6afc788cc50a22617d2c0d772f9f9ac7fcc9bf11020e0db702d29900"
   },
   "web/mondzerstoerung.js": {
    "bytes": 24262,
@@ -8101,12 +8101,12 @@
    "sha256": "c68d303fe07898fe1c7af5f1cbdd3c1c1539b53c2ed8cf1ce5deb70b2465be17"
   },
   "web/rahmen.css": {
-   "bytes": 120287,
-   "sha256": "dc08ff6705d7d811d5ac80b7a00853e8b11f9393610492f7e33a85a11f82e9b4"
+   "bytes": 120799,
+   "sha256": "2702f4c6e8ebd726ab46867e520873c30736e3b2db7a983d7aeda501f12a4f60"
   },
   "web/rahmen.js": {
-   "bytes": 52347,
-   "sha256": "5ab3e29379ebf13aefa011ddca868bc99dd5b772924c49bc3ebd18abf840ffcd"
+   "bytes": 54874,
+   "sha256": "e19ac4341fad50567c6c7e32eeb6be07e54caced6defa25e7811550f845e007d"
   },
   "web/spielerprofil.css": {
    "bytes": 6621,
@@ -8173,8 +8173,8 @@
    "sha256": "a7707e431f77f3d7ea1264a4555f16fb1d707e94c49b6648673505559b648e7a"
   }
  },
- "erstellt": "2026-11-02T00:16:49Z",
+ "erstellt": "2026-11-02T20:00:29Z",
  "format": 1,
  "schnittstelle": 1,
- "version": "0.4.16-1"
+ "version": "0.4.16-2"
 }

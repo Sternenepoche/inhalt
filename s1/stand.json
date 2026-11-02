@@ -1,8 +1,8 @@
 {
- "version": "0.4.16-1",
+ "version": "0.4.16-2",
  "schnittstelle": 1,
- "erstellt": "2026-11-02T00:16:49Z",
- "manifest_sha256": "2a690c3dbf14967b2f80c970f2cff0e91c69ba69c7449a90a06912696a3a8b9f",
+ "erstellt": "2026-11-02T20:00:29Z",
+ "manifest_sha256": "d7e522576e2eda063e653c576ba2fb7a58e4544918ba3e0a311dcd80143e8dfb",
  "manifest_bytes": 332596,
- "hinweis": "Xenokristall lässt sich jetzt direkt von Planet zu Planet verschicken: Vorlage „Ganzer Xenokristall“ im Einsatzblatt. Dazu Korrekturen beim Halten und bei den Kolonieplätzen."
+ "hinweis": "Die Werft zeigt jetzt den Weltenkrümmer – mit Grund und Weg zum Werftdock des Mondes. Ruhigere Rohstoffleiste: „+N“ bleibt in der eigenen Kachel. Seit 0.4.16-1: Xenokristall direkt verschicken."
 }
